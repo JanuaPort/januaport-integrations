@@ -1,0 +1,43 @@
+# GitHub-MCP-Upstream (Story #94/#149) — Beispiel-Integration.
+#
+# Legt diese Datei in das Upstream-Verzeichnis (JNPT_UPSTREAMS_DIR, Default
+# /data/upstreams) und starte JanuaPort. JanuaPort verbindet sich beim Start mit dem
+# GitHub-MCP-Server, entdeckt die unten allowlisted Tools und bietet sie unter
+# dem Namespace „github" über /mcp an.
+#
+# VORAUSSETZUNG: das Vault-Credential mit einem GitHub-PAT anlegen:
+#   jnpt credential set --name github-mcp-pat
+# (PAT über stdin — nie in der Spec, nie in der Shell-History). Für eine
+# read-only-Instanz genügt ein fein berechtigter, read-only-PAT.
+#
+# Format-Referenz + Zwei-Instanzen-Beispiel: docs/upstream-mcp.md
+
+name: github
+description: "GitHub via PAT"
+url: https://api.githubcopilot.com/mcp/
+
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  credential: github-mcp-pat
+
+# Optional: statische, NICHT-geheime Extra-Header (z. B. Toolset-Auswahl des
+# GitHub-MCP-Servers). An den realen Server anpassen; Secrets NIE hier.
+headers:
+  X-MCP-Toolsets: "repos,issues,pull_requests"
+
+# READ-Allowlist (deny-by-default): nur diese Tools werden read-only angeboten.
+# Die Namen sind die unqualifizierten Tool-Namen, wie der GitHub-MCP-Server sie
+# meldet (ggf. an die tatsächlich angebotenen Namen anpassen).
+tools:
+  - search_issues
+  - get_file_contents
+  - list_pull_requests
+
+# WRITE-Allowlist (#149, opt-in): schreibende Tools. Verlangen einen tool-genauen
+# Token-Scope (z. B. `jnpt token allow <id> github:create_issue`); ein
+# instanz-weiter Scope (`github`) erfasst sie NICHT. Für eine rein lesende
+# Instanz diesen Block weglassen.
+write_tools:
+  - create_issue
+  - add_issue_comment

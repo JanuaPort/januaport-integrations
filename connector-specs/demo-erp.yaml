@@ -1,0 +1,102 @@
+# Demo-ERP — read-only connector for the JanuaPort walkthrough.
+#
+# Upstream: the tiny fake ERP under examples/demo-erp (see its CLAUDE.md). It
+#           serves fixed, made-up invoices and bank transactions whose data tell
+#           a reconciliation story — perfect for trying out JanuaPort end to end
+#           WITHOUT a real accounting account.
+#
+# Credential: stored in the JanuaPort vault under the name "demo-erp"
+#             (jnpt credential set --name demo-erp). The demo ERP ships with the
+#             fixed key "demo-key-123" — this is BY DESIGN not a secret (the ERP
+#             only returns invented data), it just demonstrates the vault path.
+#             The value is NEVER written into this file.
+#
+# Scope: read-only (GET). Two tools — list invoices and list bank transactions —
+# enough to answer "which open invoices have already been paid per the bank
+# statement?".
+
+name: demo-erp
+# Fassung dieser Vorlage (Story #427). Sie zählt für die Auslieferung im Katalog
+# (#428) und für die Anhebung laufender Integrationen (#429): PATCH/MINOR = Fix
+# ohne Änderung der Werkzeug-Fläche, MAJOR = die Fläche ändert sich.
+version: "1.0.0"
+description: >
+  Fake ERP for the JanuaPort walkthrough: invented invoices and bank transactions
+  for trying out reconciliation without a real accounting account.
+
+# Local dev default: the demo ERP runs on the host at :9494. When BOTH JanuaPort and
+# the demo ERP run as containers in the same Compose network, replace
+# "localhost" with the service/host name (e.g. http://host.docker.internal:9494
+# on Docker Desktop, or the demo-erp service name). The walkthrough runs the
+# demo ERP on the host, so localhost is correct for `make run`.
+base_url: http://localhost:9494
+
+auth:
+  header: X-Api-Key
+  # The demo ERP expects the bare key as the header value (no "Bearer " prefix).
+  template: "{{credential}}"
+  credential: demo-erp
+
+timeout: 10s
+
+tools:
+  - name: list_invoices
+    description: >
+      Lists invoices from the demo ERP, optionally filtered by payment status.
+      Returns a JSON array; each invoice has: number (the invoice number, e.g.
+      "2026-0001" — this same number appears inside the purpose text of the
+      matching bank transaction), customer (the company that was billed), amount
+      (gross total in EUR as a decimal), date (issue date, format YYYY-MM-DD) and
+      status ("open" = not yet marked paid in the ERP, "paid" = already settled).
+      Use the optional status filter to narrow results: status=open returns only
+      unpaid invoices, status=paid only settled ones; omit it for all invoices.
+      Important for reconciliation: an invoice can be "open" here even though the
+      money already arrived on the bank account — the ERP status can lag. To find
+      such cases, list the open invoices and cross-check their numbers against
+      list_transactions.
+    check: true
+    params:
+      - name: status
+        description: >
+          Optional payment status filter. One of: open, paid. Omit to return all
+          invoices regardless of status.
+        type: string
+        enum: [open, paid]
+    request:
+      method: GET
+      path: /invoices
+      query:
+        - name: status
+          value: "{status}"
+    # Die Antwort umschließt die Treffer in "invoices" — dieses Array
+    # durchreichen, damit der Agent direkt die Liste sieht.
+    response: invoices
+
+  - name: list_transactions
+    description: >
+      Lists bank account transactions (Kontoumsätze) from the demo ERP,
+      optionally filtered to those on or after a start date. Returns a JSON array;
+      each transaction has: date (value date, format YYYY-MM-DD), amount (in EUR;
+      positive = incoming payment, negative = outgoing), purpose (the remittance
+      / Verwendungszweck text — for customer payments this usually contains the
+      invoice number, in varying spellings such as "RE 2026-0001", "Rechnung
+      2026-0002" or "Re-Nr 2026-0006") and counter_account (the IBAN of the other
+      party). Use the optional from filter (YYYY-MM-DD, inclusive) to limit the
+      period. This is the bank-statement side of a reconciliation: match the
+      invoice numbers found in purpose against list_invoices to see which open
+      invoices have actually been paid, whether the amount matches, and which
+      transactions have no matching invoice at all.
+    params:
+      - name: from
+        description: >
+          Optional start date (inclusive), format YYYY-MM-DD (e.g. 2026-05-01).
+          Only transactions dated on or after this day are returned. Omit to
+          return all transactions.
+        type: string
+    request:
+      method: GET
+      path: /transactions
+      query:
+        - name: from
+          value: "{from}"
+    response: transactions

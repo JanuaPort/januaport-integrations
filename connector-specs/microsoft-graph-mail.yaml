@@ -1,0 +1,523 @@
+# Microsoft 365 Postfach über Microsoft Graph (v1.0) — lesen, Anhänge als TEXT
+# lesen, Entwurf anlegen. KEIN VERSAND (Story #332, PO-Entscheid #329).
+#
+# API:        https://graph.microsoft.com
+# Doku:       Nachrichten auflisten
+#             https://learn.microsoft.com/en-us/graph/api/user-list-messages?view=graph-rest-1.0
+#             Nachricht holen
+#             https://learn.microsoft.com/en-us/graph/api/message-get?view=graph-rest-1.0
+#             Anhänge auflisten
+#             https://learn.microsoft.com/en-us/graph/api/message-list-attachments?view=graph-rest-1.0
+#             Einen Anhang holen (inkl. /$value für die Rohbytes)
+#             https://learn.microsoft.com/en-us/graph/api/attachment-get?view=graph-rest-1.0
+#             Entwurf anlegen
+#             https://learn.microsoft.com/en-us/graph/api/user-post-messages?view=graph-rest-1.0
+#             App-only-Token (Client-Credentials)
+#             https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow
+# Anleitung:  docs/connector-microsoft-graph-mail.md (App-Registrierung, Consent,
+#             Postfach-Beschränkung in Exchange, Credential in den Vault)
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE. `token_url` und `client_id` sind
+# mandantenspezifisch und stehen hier als Null-GUID-Platzhalter. Vor dem Einsatz
+# beide durch die Werte der eigenen App-Registrierung ersetzen (die Datei bleibt
+# dabei einchecktauglich: das CLIENT SECRET steht NIE hier, sondern nur im Vault
+# unter dem Namen "microsoft-graph-mail").
+#
+# ⚠️ OHNE POSTFACH-BESCHRÄNKUNG IN EXCHANGE IST DIE EINRICHTUNG NICHT FERTIG.
+# Eine Microsoft-365-App-Permission gilt von sich aus MANDANTENWEIT — für ALLE
+# Postfächer. Die Beschränkung auf genau ein Postfach passiert nicht hier und
+# nicht in Entra, sondern in Exchange Online (RBAC for Applications bzw. die
+# ältere Application Access Policy). Schritt 4 der Anleitung; ohne ihn hätte
+# dieser Connector Zugriff auf jedes Postfach des Mandanten.
+#
+# ⚠️ EHRLICH ZUR BERECHTIGUNG: `Mail.ReadWrite` (application) ist GRÖBER als die
+# Werkzeugfläche dieses Connectors. Microsoft kennt keine Berechtigung „darf nur
+# Entwürfe anlegen" — `Mail.ReadWrite` erlaubt in Graph auch Ändern und Löschen
+# von Mails. Wer die App-Registrierung im Portal ansieht, sieht also diese
+# gröbere Zahl. Verengt wird an zwei anderen Stellen:
+#   * bei UNS auf genau diese fünf Tools (deny-by-default, tool-genauer Scope für
+#     den Schreibweg, jeder Aufruf im Audit),
+#   * in EXCHANGE auf genau ein Postfach (s. o.).
+# Die Anhänge (#703) brauchen KEINE neue Berechtigung: `GET …/attachments` und
+# `GET …/attachments/{id}/$value` genügen laut Doku app-only `Mail.Read` — davon
+# ist `Mail.ReadWrite` die Obermenge. Kein neuer Consent, kein Handgriff beim
+# Kunden.
+# Was `Mail.ReadWrite` ausdrücklich NICHT enthält, ist das Senden — Microsoft
+# schreibt zur Rolle „Application Mail.ReadWrite": „Doesn't include permission to
+# send mail." Genau deshalb reicht sie für den Entwurfs-Pfad und macht autonomen
+# Versand technisch unmöglich. `Mail.Send` wird bewusst NICHT beantragt.
+#
+# ENVELOPE-ABGLEICH gegen die Graph-Doku (#73-Lehre — die Runtime-Header sind
+# Runtime-Sache, die fachlichen deklariert die Spec seit #347):
+#   * `Authorization: Bearer <token>` — Doku-Pflicht; die Runtime setzt ihn aus
+#     `auth.template`, der Token kommt app-only aus `internal/oauth2cc`.
+#   * `Accept: application/json` — die Runtime setzt ihn auf JEDEN Request
+#     (#73). Graph verlangt ihn nicht, es schadet aber nicht: Graph antwortet
+#     ohnehin JSON. AUSNAHME `read_attachment` (#703): Dort steht ein statischer
+#     `Accept: */*` am Werkzeug und überlagert den Default — die Antwort ist
+#     dort eine DATEI, kein JSON.
+#   * `Content-Type: application/json` — Doku-Pflicht beim POST; kommt aus
+#     `encoding: json` (nie aus der Spec).
+#   * `Content-Length` — Doku nennt ihn beim POST; Go setzt ihn selbst, weil der
+#     Body ein `bytes.Buffer` mit bekannter Länge ist.
+#   * `Prefer: outlook.body-content-type="text"` — steht seit #347 als statischer
+#     Header am Tool `get_message` (das Format kann das jetzt). Damit BITTET der
+#     Aufruf um einen Klartext-Body statt HTML. `Prefer` ist eine Bitte: Graph
+#     darf sie übergehen und antwortet dann ggf. mit `Preference-Applied`; was
+#     wirklich ankam, sagt `body.contentType` in der Antwort. Für `list_messages`
+#     wäre er sinnlos — laut Doku liefert „List messages" Bodies ohnehin nur als
+#     HTML —, deshalb steht er bewusst nur an dem einen Tool.
+#
+# RATE LIMITS: Graph drosselt pro App und Postfach und antwortet dann mit 429 +
+# `Retry-After`. Eine belastbare Zahl für den Outlook-Dienst war auf
+# learn.microsoft.com/graph/throttling-limits (Stand 05.08.2026) nicht auffindbar
+# — `min_interval: 200ms` ist deshalb eine bewusst konservative Selbstbremse
+# (~5 Aufrufe/s). Ein 429 kommt als Upstream-Fehler beim Agenten an; JanuaPort
+# wiederholt NICHT automatisch.
+#
+# KEIN `check: true`-TOOL: Jedes Tool braucht den Parameter `mailbox` (das
+# Postfach steht bewusst nicht in der eingecheckten Spec). Damit gibt es keinen
+# parameterlosen Probe-Aufruf — `jnpt connector check` endet für diesen Connector
+# nach Stufe 2 (Spec gültig, Credential im Vault vorhanden), und `jnpt connector
+# selftest` überspringt ihn. Der Live-Beleg läuft deshalb über einen echten
+# Tool-Call (Issue #344), nicht über die Probe.
+#
+# ⚠️ `contentBytes` STEHT ABSICHTLICH NIRGENDS (#703). Beim Auflisten der
+# Anhänge liefert Graph dieses Feld — die vollständige base64-Nutzlast JEDER
+# Datei — von sich aus MIT, wenn man kein `$select` setzt. Eine Mail mit drei
+# PDFs risse damit das Antwortlimit, und eine KI kann mit base64 ohnehin nichts
+# anfangen. `list_attachments` trägt deshalb ein FESTES `$select` ohne dieses
+# Feld, und keine Projektion nennt es. Wer es „nachrüsten" will: Der Weg zum
+# Inhalt heißt `read_attachment`, und der liefert TEXT. Ein Wächter-Test
+# (internal/connector/mail_spec_test.go) hält beide Richtungen fest.
+#
+# BEWUSST NICHT DRIN (Scope-Grenzen #332, nachgezogen in #703): kein Versand-Tool,
+# kein ANHÄNGEN von Dateien an einen Entwurf, kein Herunterladen von Anhängen als
+# Datei (die KI bekommt TEXT, nie Bytes und nie einen Link), kein OCR für
+# gescannte PDFs, keine Sammel-Abrufe („alle Anhänge aller Mails" — ein Anhang je
+# Aufruf), kein Kalender/SharePoint/Teams, keine Pagination-Automatik (der Agent
+# paginiert über Parameter), kein `privacy:`-Block (die Bewertung, welche Felder
+# pseudonymisiert gehören, ist eine eigene Story — #328; das Feld `text` von
+# read_attachment ist genau die Naht, an der sie ansetzt).
+#
+# ⚠️ ABGRENZUNG ZU `save_attachment` (Story #718, Baustein 1 aus #704): Die
+# obige Zusage — „die KI bekommt TEXT, nie Bytes und nie einen Link" — gilt
+# UNVERÄNDERT für `read_attachment`, das einzige Werkzeug DIESER Spec, das
+# einen Anhang überhaupt anfasst. `save_attachment` ist KEIN YAML-Werkzeug
+# dieser Datei — es existiert nicht in `tools:` unten und hat kein
+# `response`/`response_file`-Feld hier zu deklarieren. Es ist ein GO-NATIVES
+# Werkzeug (`cmd/jnpt/mail_save_attachment.go`, Präzedenz: internal/kartei,
+# internal/usecase, internal/wissen), das `internal/connector/runtime.
+# Executor.FetchFile` (denselben Sicherheitspfad wie `read_attachment`, nur
+# gestoppt VOR der Text-Extraktion) als Go-Funktion aufruft und die Bytes
+# serverseitig — nie über ein MCP-Feld — an eine konfigurierte
+# Schreibziel-Datei-Integration weiterreicht. Der Grund, warum es NICHT als
+# YAML-Tool dieser Spec geht: `write: true` verlangt `request.method: POST`
+# (`internal/connector/load.go`), der Byte-Abruf ist aber ein GET gegen Graph
+# — die Tool-SEMANTIK (Schreiben, Bestätigung, tool-genauer Scope) und die
+# HTTP-Methode (Lesen) laufen hier auseinander. Details:
+# `docs/write-path-design.md` §9, `docs/connector-microsoft-graph-mail.md` §9.
+
+name: microsoft-graph-mail
+# Fassung dieser Vorlage (Story #427) — siehe demo-erp.yaml für die Bedeutung.
+# 2.0.0 (#703): ZWEI NEUE WERKZEUGE sind eine Flächen-Änderung, und der
+# Flächen-Wächter (internal/connector/surface.go) weist eine PATCH-/MINOR-Anhebung
+# dafür fail-closed ab.
+version: "2.0.0"
+description: >
+  Microsoft 365 mailbox via Microsoft Graph: read the messages of ONE mailbox,
+  read the TEXT CONTENT of their attachments, and put a draft into it. App-only
+  access; this connector cannot send mail.
+base_url: https://graph.microsoft.com
+
+auth:
+  # App-only (Client-Credentials): JanuaPort holt den Access-Token selbst beim
+  # Token-Endpoint. Kein Mensch im Kreis, keine an eine Sitzung gebundene
+  # Anmeldung — die Voraussetzung für einen unbeaufsichtigten Prozess.
+  type: oauth2_client_credentials
+  header: Authorization
+  template: "Bearer {{credential}}"
+  # Vault-Name des CLIENT SECRET (jnpt credential set --name microsoft-graph-mail).
+  # Der Wert steht nie in dieser Datei.
+  credential: microsoft-graph-mail
+  # PLATZHALTER — durch die eigene Mandanten-ID ersetzen.
+  token_url: https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/oauth2/v2.0/token
+  # PLATZHALTER — durch die Anwendungs-(Client-)ID der App-Registrierung ersetzen.
+  # Kein Secret, gehört deshalb in die Spec.
+  client_id: "00000000-0000-0000-0000-000000000000"
+  # Bei Graph app-only ist .default der richtige (und einzige) Scope: er fordert
+  # genau die Berechtigungen an, die dem Dienstprinzipal zugewiesen sind.
+  scopes: ["https://graph.microsoft.com/.default"]
+
+timeout: 30s
+min_interval: 200ms
+
+# Der Entwurfstext ist Freitext und kann personenbezogene Daten tragen; er hat im
+# Audit-Log keinen diagnostischen Wert. `mailbox`, `recipient` und `subject`
+# bleiben bewusst im Klartext — nur so bleibt ein Schreibvorgang zurechenbar
+# („Entwurf an X mit Betreff Y in Postfach Z").
+redact_params: [content]
+
+tools:
+  - name: list_messages
+    description: >
+      Lists messages (emails) of ONE Microsoft 365 mailbox. Returns for each
+      message: id (pass it to get_message), receivedDateTime (ISO 8601, UTC),
+      subject, from (sender name and address), toRecipients, hasAttachments,
+      bodyPreview (a short PLAIN-TEXT excerpt of about 255 characters) and
+      webLink (opens the message in Outlook on the web). The FULL body is not in
+      this list — use get_message for it.
+      FILTERING — use EITHER filter OR search, never both: the messages endpoint
+      does not support combining them. Use filter for exact date ranges and an
+      exact sender address; use search for words in the subject or a sender you
+      only know partially. Both are optional; without either you get one
+      unfiltered page of the mailbox in the order Graph happens to return — say
+      which period you mean instead of assuming it is the newest.
+      PAGING is manual and deliberate: use top for the page size and skip to move
+      on. The response field next_link is Graph's own "there is more" marker (an
+      opaque URL); this tool cannot follow it — instead narrow the period in
+      filter or increase skip. There is no automatic paging.
+      Note that the mailbox is a mailbox, not a database: a message can be moved
+      or deleted by a human at any time, and this list includes all folders of the
+      mailbox (also Deleted Items and Drafts) unless you narrow it down yourself.
+    params:
+      - name: mailbox
+        description: >
+          Required. The mailbox to read, written as its email address (user
+          principal name), e.g. "rechnungen@example.com". Only the ONE mailbox
+          that the tenant administrator released for this app is reachable — any
+          other mailbox is refused by Exchange with HTTP 403, even though the
+          request itself is well formed.
+        type: string
+        required: true
+      - name: filter
+        description: >
+          Optional. An OData $filter expression. Do NOT set search at the same
+          time. Building blocks (combine with "and"):
+          period — "receivedDateTime ge 2026-04-01T00:00:00Z and receivedDateTime
+          lt 2026-05-01T00:00:00Z" (date/time literals are ISO 8601 in UTC and
+          are NOT put in quotes);
+          sender — "from/emailAddress/address eq 'lieferant@example.com'" (the
+          address IS put in single quotes and must match exactly);
+          attachments — "hasAttachments eq true";
+          subject (prefix only) — "startswith(subject,'Rechnung')"; for words
+          anywhere in the subject use search instead.
+          A filter Graph does not support may be ignored silently rather than
+          rejected — if a result looks unfiltered, simplify the expression.
+        type: string
+      - name: search
+        description: >
+          Optional. A Keyword Query Language (KQL) search over the Exchange
+          search index. Do NOT set filter at the same time. Pass the expression
+          WITHOUT the surrounding double quotes — JanuaPort adds them. Building blocks
+          (combine with AND / OR inside the expression): subject:Rechnung |
+          from:lieferant@example.com | body:Verwendungszweck |
+          hasAttachments:true | received:2026-04-01..2026-04-30. A complete value
+          looks like this: subject:Rechnung AND from:lieferant@example.com
+          Naming no property at all (a bare word such as Rechnung) searches from,
+          subject and body together. Search matches indexed WORDS, not arbitrary
+          substrings. Results come back sorted by the date and time the message
+          was sent and are capped at 1000 — do not additionally set order_by
+          here, its rule below is tied to filter.
+        type: string
+      - name: order_by
+        description: >
+          Optional. An OData $orderby expression, e.g. "receivedDateTime desc"
+          (newest first). Only useful together with filter, and Graph enforces a
+          strict rule: every property you sort by must ALSO appear in filter, in
+          the same order, and before any property that is only filtered.
+          Otherwise Graph answers with the error InefficientFilter ("The
+          restriction or sort order is too complex for this operation"). Working
+          example: filter "receivedDateTime ge 2026-04-01T00:00:00Z and
+          receivedDateTime lt 2026-05-01T00:00:00Z" together with order_by
+          "receivedDateTime desc".
+        type: string
+      - name: top
+        description: >
+          Optional. Page size, between 1 and 1000; Graph's default is 10. Keep it
+          moderate (25 to 50): a large page of full messages can run into an
+          upstream gateway timeout, and a very large response is refused by JanuaPort
+          (1 MiB limit).
+        type: integer
+      - name: skip
+        description: >
+          Optional. Number of items to skip before the page starts, for manual
+          paging. Microsoft's own caveat applies: this API counts skip over ALL
+          items it has walked through in the mailbox, not only over the messages
+          it returned, so paging by skip alone can behave surprisingly. The
+          robust way through a large result is to narrow the period in filter
+          step by step.
+        type: integer
+    request:
+      method: GET
+      path: /v1.0/users/{mailbox}/messages
+      query:
+        # Fester $select: kleinere Antworten, kürzere Laufzeit (Doku empfiehlt
+        # das ausdrücklich) und eine Antwortform, die der Tool-Text vollständig
+        # benennen kann. Der volle Body kommt nur über get_message.
+        - name: "$select"
+          value: "id,receivedDateTime,subject,from,toRecipients,hasAttachments,bodyPreview,webLink"
+        - name: "$filter"
+          value: "{filter}"
+        # Die KQL-Anführungszeichen stehen fest in der Spec — der Agent liefert
+        # nur den Ausdruck. Fehlt `search`, entfällt der ganze Query-Parameter
+        # (auch mit den Anführungszeichen drumherum).
+        - name: "$search"
+          value: '"{search}"'
+        - name: "$orderby"
+          value: "{order_by}"
+        - name: "$top"
+          value: "{top}"
+        - name: "$skip"
+          value: "{skip}"
+    # Graph umschließt die Treffer in "value" und hängt bei weiteren Seiten
+    # "@odata.nextLink" an. Der Link bleibt als `next_link` erhalten — er ist die
+    # ehrliche Antwort auf „gibt es mehr?", ohne dass JanuaPort automatisch
+    # paginiert.
+    # Jede Nachricht wird zusätzlich auf genau die im Tool-Text genannten Felder
+    # projiziert (#368): `$select` verengt nur die FACHLICHEN Felder — die
+    # OData-Metafelder setzt Graph unabhängig davon, live trägt jedes
+    # Nachrichten-Objekt ein `@odata.etag`. Ein undeklariertes Antwortfeld liefe
+    # an der Pseudonymisierung vorbei, deshalb schneidet die Projektion es ab.
+    response: >-
+      {messages: value[*].{id: id, receivedDateTime: receivedDateTime,
+      subject: subject, from: from, toRecipients: toRecipients,
+      hasAttachments: hasAttachments, bodyPreview: bodyPreview,
+      webLink: webLink},
+      next_link: "@odata.nextLink"}
+
+  - name: get_message
+    description: >
+      Returns ONE message of the mailbox by its id (as returned by
+      list_messages), including the full body. Fields: id, receivedDateTime,
+      sentDateTime, subject, from, toRecipients, ccRecipients, hasAttachments,
+      bodyPreview, body and webLink.
+      ABOUT THE BODY, honestly: this call ASKS Microsoft Graph for the body as
+      plain text instead of HTML (it sends the header Prefer:
+      outlook.body-content-type="text"). That is a preference, not an order —
+      Graph may ignore it and return HTML anyway. ALWAYS read body.contentType to
+      see which form you actually got, and do not assume plain text; if it says
+      html, body.content is an HTML document you have to read the text out of. If
+      you only need a short excerpt, bodyPreview from list_messages is plain text
+      in either case.
+      ATTACHMENTS: hasAttachments only tells you THAT the message has
+      attachments — this call never returns them. To see which ones there are,
+      call list_attachments with the same message id; to get the TEXT of one of
+      them, call read_attachment.
+      A very large message can exceed JanuaPort's 1 MiB response limit and then comes
+      back as an upstream error; in that case work with bodyPreview.
+    params:
+      - name: mailbox
+        description: >
+          Required. The same mailbox address you used in list_messages, e.g.
+          "rechnungen@example.com". Only the one released mailbox is reachable.
+        type: string
+        required: true
+      - name: message_id
+        description: >
+          Required. The message id from list_messages. Pass it exactly as it came
+          back, including any "=", "-" or "_" characters — JanuaPort encodes it for
+          the URL itself.
+        type: string
+        required: true
+    # Statischer Request-Header (#347), nur für dieses Tool: Graph liefert
+    # Nachrichten-Bodies sonst als HTML. `Prefer` ist eine BITTE — Graph darf sie
+    # übergehen; was ankam, steht in `body.contentType` (und ggf. im
+    # Antwort-Header `Preference-Applied`, den JanuaPort nicht auswertet). Am
+    # list_messages-Tool wäre er wirkungslos (die Doku sagt: nur HTML).
+    headers:
+      Prefer: 'outlook.body-content-type="text"'
+    request:
+      method: GET
+      # Message-IDs sind lang und enthalten Sonderzeichen; die Runtime escaped
+      # den Pfad-Platzhalter (PathEscape) und setzt Path/RawPath konsistent, es
+      # wird also nichts doppelt kodiert.
+      path: /v1.0/users/{mailbox}/messages/{message_id}
+      query:
+        - name: "$select"
+          value: "id,receivedDateTime,sentDateTime,subject,from,toRecipients,ccRecipients,hasAttachments,bodyPreview,body,webLink"
+    # Projektion auf genau die im Tool-Text genannten Felder (#368). `$select`
+    # allein reicht dafür NICHT: Es verengt die FACHLICHEN Felder, die
+    # OData-Metafelder setzt Graph unabhängig davon — live kamen `@odata.context`
+    # und `@odata.etag` zusätzlich durch. Abschneiden muss sie deshalb die
+    # Projektion, sonst liefe ein undeklariertes Antwortfeld an der
+    # Pseudonymisierung vorbei.
+    response: >-
+      {id: id, receivedDateTime: receivedDateTime, sentDateTime: sentDateTime,
+      subject: subject, from: from, toRecipients: toRecipients,
+      ccRecipients: ccRecipients, hasAttachments: hasAttachments,
+      bodyPreview: bodyPreview, body: body, webLink: webLink}
+
+  - name: list_attachments
+    description: >
+      Lists the attachments of ONE message: id (pass it to read_attachment),
+      name, contentType, size in bytes, isInline, lastModifiedDateTime and type.
+      READ THE TYPE: only "#microsoft.graph.fileAttachment" can be read as text.
+      An itemAttachment is an embedded Outlook item and a referenceAttachment is
+      only a LINK to a cloud file — for both, read_attachment fails.
+      isInline true usually means a logo or a signature image embedded in the
+      message body, not a document — when you are after an invoice, skip those.
+      This tool returns METADATA ONLY; it never returns the file itself and
+      never a download link. Use read_attachment for the content.
+      There is no paging here: a message returns all its attachments at once.
+    params:
+      - name: mailbox
+        description: >
+          Required. The same mailbox address you used in list_messages, e.g.
+          "rechnungen@example.com". Only the one released mailbox is reachable.
+        type: string
+        required: true
+      - name: message_id
+        description: >
+          Required. The message id from list_messages. Pass it exactly as it came
+          back, including any "=", "-" or "_" characters — JanuaPort encodes it for
+          the URL itself.
+        type: string
+        required: true
+    request:
+      method: GET
+      path: /v1.0/users/{mailbox}/messages/{message_id}/attachments
+      query:
+        # 🚨 PFLICHTZEILE: Ohne `$select` liefert Graph `contentBytes` MIT — die
+        # vollständige base64-Nutzlast JEDES Anhangs. Eine Mail mit drei PDFs
+        # risse damit das 1-MiB-Antwortlimit, und der KI nützt base64 nichts.
+        # Diese Zeile ist der einzige Grund, warum das Auflisten billig ist.
+        - name: "$select"
+          value: "id,name,contentType,size,isInline,lastModifiedDateTime"
+    # Projektion auf genau die im Tool-Text genannten Felder (#368). `@odata.type`
+    # bleibt bewusst drin und heißt hier `type`: Es ist die Auskunft, ob
+    # read_attachment überhaupt gehen kann. Die übrigen OData-Metafelder
+    # (`@odata.context`, `@odata.etag`, `@odata.mediaContentType`) setzt Graph
+    # unabhängig vom `$select` — die Projektion schneidet sie ab, sonst liefe ein
+    # undeklariertes Antwortfeld an der Pseudonymisierung vorbei.
+    response: >-
+      {attachments: value[*].{id: id, name: name, contentType: contentType,
+      size: size, isInline: isInline, lastModifiedDateTime: lastModifiedDateTime,
+      type: "@odata.type"}}
+
+  - name: read_attachment
+    description: >
+      Returns the TEXT CONTENT of ONE attachment — never the bytes and never a
+      download link. Fields: name, mime, declared_mime, bytes, kind, readable,
+      text, truncated, text_bytes_total, note and embedded[].
+      HONESTLY, WHAT YOU GET: the text layer of a PDF · the XML embedded in a
+      PDF/A-3 invoice (ZUGFeRD/Factur-X — it arrives in embedded[] and is the
+      RELIABLE source for amounts and invoice numbers, better than the page
+      text) · XML, plain text, CSV and JSON as they are.
+      Anything else — Word, Excel, images, .eml, ZIP — comes back with
+      readable false plus its type and size. Do not guess its content.
+      A SCANNED PDF has no text layer: you get an empty text and a note saying
+      so. There is no OCR in this version.
+      PDF text extraction keeps the WORDS, not the layout: columns may
+      interleave, table structure is lost, and unusual fonts can turn umlauts
+      into replacement characters. That is enough for "what does this invoice
+      say", not for "read me the line items exactly".
+      TRUNCATED: if truncated is true you only got the beginning.
+      An itemAttachment returns a raw MIME message this tool does not parse; a
+      referenceAttachment is only a link and fails with HTTP 405 — open it
+      yourself. One attachment per call; there is no bulk read.
+    headers:
+      # Die Runtime setzt sonst `Accept: application/json` auf JEDEN Request.
+      # Hier ist die Antwort eine DATEI — der statische Header überlagert den
+      # Default (statische Header gewinnen, und `Accept` ist kein reservierter).
+      Accept: "*/*"
+    params:
+      - name: mailbox
+        description: >
+          Required. The same mailbox address you used in list_messages, e.g.
+          "rechnungen@example.com". Only the one released mailbox is reachable.
+        type: string
+        required: true
+      - name: message_id
+        description: >
+          Required. The message id from list_messages, passed exactly as it came
+          back.
+        type: string
+        required: true
+      - name: attachment_id
+        description: >
+          Required. The attachment id from list_attachments, passed exactly as it
+          came back. Only an attachment of type
+          "#microsoft.graph.fileAttachment" can be read.
+        type: string
+        required: true
+    request:
+      method: GET
+      # `/$value` liefert die ROHBYTES mit dem Original-Content-Type. Der Weg
+      # ohne `$value` lieferte JSON mit `contentBytes` (base64) — dreifacher
+      # Speicher, nichts gewonnen.
+      path: /v1.0/users/{mailbox}/messages/{message_id}/attachments/{attachment_id}/$value
+    # Die Antwort ist eine DATEI, keine JSON (#703). Die Runtime liest die Bytes
+    # mit einem eigenen Deckel, hält sie nur im Speicher und liefert den daraus
+    # gewonnenen TEXT. Die Bytes berühren nie Platte, Log oder Audit.
+    response_file:
+      source: body
+
+  - name: create_draft
+    description: >
+      Creates a DRAFT email in the mailbox. The draft is saved to the Drafts
+      folder and is NOT SENT — nothing leaves the mailbox. This connector cannot
+      send mail at all: the application deliberately has no Mail.Send permission
+      and there is no send tool. A human opens the draft in Outlook, checks it
+      and clicks Send. Never report to a user that a mail "was sent"; report that
+      a draft is ready for review, and pass on the returned web_link so they can
+      open it.
+      This is a WRITE/MUTATING action: a human must confirm it before it is
+      performed — do not call it autonomously. It also needs the tool-exact
+      permission "microsoft-graph-mail:create_draft"; a connector-wide scope does
+      NOT grant it.
+      The draft gets exactly one recipient, a subject and a PLAIN-TEXT body. No
+      HTML, no CC/BCC, no attachments, no reply-to — deliberately not part of
+      this version. On success it returns the new draft's id, is_draft (always
+      true — the proof that nothing was sent), web_link and the subject.
+      Retrying after an error can create a SECOND draft (JanuaPort never repeats a
+      write automatically) — look into the Drafts folder before you try again.
+    write: true
+    params:
+      - name: mailbox
+        description: >
+          Required. The mailbox the draft is created in, as its email address,
+          e.g. "rechnungen@example.com". The draft is written to THIS mailbox's
+          Drafts folder; only the one released mailbox is reachable.
+        type: string
+        required: true
+      - name: recipient
+        description: >
+          Required. The email address of the single recipient the draft is
+          addressed to, e.g. "kunde@example.com". Check it carefully — a human
+          sends the draft later and may not verify the address again.
+        type: string
+        required: true
+      - name: subject
+        description: Required. The subject line of the draft.
+        type: string
+        required: true
+      - name: content
+        description: >
+          Required. The body of the draft as PLAIN TEXT (line breaks are kept,
+          HTML markup is not interpreted). This text is deliberately not written
+          to the audit log.
+        type: string
+        required: true
+    request:
+      method: POST
+      path: /v1.0/users/{mailbox}/messages
+      encoding: json
+      body_json:
+        subject: "{subject}"
+        body:
+          # Text statt HTML: der Entwurf ist Klartext, so kann ein Wert keine
+          # Auszeichnung ins Postfach tragen.
+          contentType: Text
+          content: "{content}"
+        toRecipients:
+          - emailAddress:
+              address: "{recipient}"
+      # Bewusst NICHT im Body: `isDraft` (in Graph ein Nur-Lese-Feld — POST auf
+      # /messages legt per Definition einen Entwurf an) und `importance` (nicht
+      # gebraucht). Das Beispiel in docs/connector-spec.md zeigt `isDraft: true`
+      # als FORMAT-Beispiel; gegen die echte API gehört es nicht in den Request.
+    # 201 Created mit dem angelegten Entwurf. Wir projizieren auf das, was der
+    # Agent weitergeben muss — inklusive is_draft als Beleg, dass nichts
+    # versendet wurde.
+    response: "{id: id, is_draft: isDraft, web_link: webLink, subject: subject}"
