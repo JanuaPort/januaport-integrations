@@ -23,8 +23,10 @@ JanuaPort turns an existing system (ERP, accounting, mailbox, file storage) into
 tools for AI agents. **What JanuaPort addresses in those systems is defined here:** a spec describes in
 YAML which calls to another system are allowed and how their response reaches the agent. Each spec becomes
 MCP tools when it is loaded; the gateway adds permissions, pseudonymisation and audit on top.
-Pseudonymisation is deterministic and rule-based: it replaces declared fields and defined patterns with fixed
-tokens, with no language model in the path.
+Pseudonymisation is deterministic and rule-based, with no language model in the path, and off unless
+configured: it replaces with fixed tokens only the fields the operator declares and, in free text, only
+what the operator assigns a pattern to (for example IBAN, e-mail, phone). Names in free text are not
+detected.
 
 A spec is **configuration, not code**: it is read, never executed. That is why it can be contributed and
 reviewed from outside without anyone touching the gateway.
