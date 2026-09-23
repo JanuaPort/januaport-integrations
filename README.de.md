@@ -23,8 +23,10 @@ fein berechtigte MCP-Werkzeuge für KI-Agenten. **Was JanuaPort dabei anspricht,
 hier:** eine Spec beschreibt in YAML, welche Aufrufe an ein fremdes System erlaubt sind
 und wie deren Antwort beim Agenten ankommt. Aus jeder Spec entstehen beim Laden
 MCP-Werkzeuge; Berechtigung, Pseudonymisierung und Audit legt das Gateway darüber. Die
-Pseudonymisierung ist deterministisch und regelbasiert: Sie ersetzt deklarierte Felder und festgelegte
-Muster durch feste Kürzel, ohne ein Sprachmodell im Pfad.
+Pseudonymisierung ist deterministisch und regelbasiert, ohne Sprachmodell im Pfad, und greift nur, wo sie
+eingerichtet ist: Sie ersetzt durch feste Kürzel nur die Felder, die der Betreiber deklariert, und im
+Fließtext nur, wofür der Betreiber ein Muster zuweist (z. B. IBAN, E-Mail, Telefon). Namen im Fließtext
+erkennt sie nicht.
 
 Eine Spec ist **Konfiguration, kein Code** — sie wird gelesen, nicht ausgeführt. Deshalb
 kann sie von außen beigetragen und geprüft werden, ohne dass jemand das Gateway anfasst.
