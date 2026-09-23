@@ -1,121 +1,121 @@
 # januaport-integrations
 
-Outbound: Connector-Specs, Spec-Format, Katalog, Beispiel-Konfigurationen für JanuaPort (Apache 2.0)
+**English** · [Deutsch](README.de.md)
 
-**Status:** privat bis zum GoLive von JanuaPort (Flip in der GoLive-Checkliste JanuaPort/januaport#788). Teil des Open-Core-Pivots (JanuaPort/januaport#773).
+Outbound for JanuaPort: connector specs, spec formats, catalogue and example configurations, i.e. everything JanuaPort talks to in other systems.
 
-**Lizenz:** Apache License 2.0 (`LICENSE`), Copyright 2026 JanuaPort GmbH (`NOTICE`). Beiträge: `CONTRIBUTING.md`.
+JanuaPort is a self-hosted MCP gateway. It connects AI assistants to a company's existing systems with
+fine-grained permissions and records access in an append-only audit log. The core of JanuaPort is
+proprietary software of JanuaPort GmbH and is not part of this repository. This repository is one of the
+open edges around it.
 
-**Zuständig:** CONNECTOR Master Brain (JanuaPort/januaport#780) — Ownership je Unterordner.
+- **License:** Apache License 2.0 ([`LICENSE`](LICENSE), [`NOTICE`](NOTICE))
+- **Links:** [januaport.ai](https://januaport.ai) · [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+- **Language:** The format contracts and guides in `docs/` are currently written in German.
 
-Keine Kundendaten, keine Schlüssel, keine Betreiberwerte in diesem Repository.
+No customer data, no keys, no operator values in this repository.
 
 ---
 
-## Worum es geht
+## What this is about
 
-JanuaPort macht aus einem Bestandssystem — ERP, Buchhaltung, Postfach, Dateiablage —
-fein berechtigte MCP-Werkzeuge für KI-Agenten. **Was JanuaPort dabei anspricht, steht
-hier:** eine Spec beschreibt in YAML, welche Aufrufe an ein fremdes System erlaubt sind
-und wie deren Antwort beim Agenten ankommt. Aus jeder Spec entstehen beim Laden
-MCP-Werkzeuge; Berechtigung, Pseudonymisierung und Audit legt das Gateway darüber.
+JanuaPort turns an existing system (ERP, accounting, mailbox, file storage) into finely permissioned MCP
+tools for AI agents. **What JanuaPort addresses in those systems is defined here:** a spec describes in
+YAML which calls to another system are allowed and how their response reaches the agent. Each spec becomes
+MCP tools when it is loaded; the gateway adds permissions, pseudonymisation and audit on top.
+Pseudonymisation is deterministic and rule-based: it replaces declared fields and defined patterns with fixed
+tokens, with no language model in the path.
 
-Eine Spec ist **Konfiguration, kein Code** — sie wird gelesen, nicht ausgeführt. Deshalb
-kann sie von außen beigetragen und geprüft werden, ohne dass jemand das Gateway anfasst.
+A spec is **configuration, not code**: it is read, never executed. That is why it can be contributed and
+reviewed from outside without anyone touching the gateway.
 
-## Was hier liegt
+## What lives here
 
-| Ordner | Inhalt |
+| Folder | Contents |
 |---|---|
-| [`connector-specs/`](connector-specs/) | Die ausgelieferten REST-Specs — fünf Stück, Tabelle unten. |
-| [`upstream-specs/`](upstream-specs/) | Beispiel-Konfiguration für einen **MCP-Upstream** (fremder MCP-Server unter unserer Governance): `github.yaml`. |
-| [`docs/`](docs/) | Die vier Format-Verträge, die Bau-Disziplin und zwei Betreiber-Anleitungen. |
-| [`examples/`](examples/) | Beilagen zu den Anleitungen (heute: das Exchange-Skript zur Ein-Postfach-Grenze). |
+| [`connector-specs/`](connector-specs/) | The shipped REST specs, five of them, see the table below. |
+| [`upstream-specs/`](upstream-specs/) | Example configuration for an **MCP upstream** (a third-party MCP server under our governance): `github.yaml`. |
+| [`docs/`](docs/) | The four format contracts, the build discipline and two operator guides. |
+| [`examples/`](examples/) | Attachments to the guides (today: the Exchange script for the single-mailbox limit). |
 
-## Die vier Format-Verträge
+## The four format contracts
 
-Vier Integrationsarten, vier Formate. Welche die richtige ist, entscheidet sich **vor**
-dem Bau — die Faustregel steht in [`docs/connector-treue.md`](docs/connector-treue.md) §8:
-*Gibt es für das System bereits einen MCP-Server, ist er der Weg.*
+Four kinds of integration, four formats. Which one is right is decided **before** building. The rule of
+thumb is in [`docs/connector-treue.md`](docs/connector-treue.md) §8: *if an MCP server already exists for
+the system, that is the way.*
 
-| Art | Vertrag | Wofür |
+| Kind | Contract | For |
 |---|---|---|
-| REST-Connector | [`docs/connector-spec.md`](docs/connector-spec.md) | System mit brauchbarer REST-API — ein Tool je Endpunkt. |
-| MCP-Upstream | [`docs/upstream-mcp.md`](docs/upstream-mcp.md) | Für das System existiert ein MCP-Server: proxen statt nachbauen. |
-| Datenbank | [`docs/db-connector-spec.md`](docs/db-connector-spec.md) | Bestandssystem ohne API, aber mit Datenbank — kuratierte Sicht statt freier SQL-Zugriff. |
-| Datei | [`docs/file-connector-spec.md`](docs/file-connector-spec.md) | Was als Datei in ein Verzeichnis fällt (z. B. ein Kontoauszug). |
+| REST connector | [`docs/connector-spec.md`](docs/connector-spec.md) | A system with a usable REST API: one tool per endpoint. |
+| MCP upstream | [`docs/upstream-mcp.md`](docs/upstream-mcp.md) | An MCP server exists for the system: proxy it instead of rebuilding it. |
+| Database | [`docs/db-connector-spec.md`](docs/db-connector-spec.md) | An existing system without an API but with a database: a curated view instead of free SQL access. |
+| File | [`docs/file-connector-spec.md`](docs/file-connector-spec.md) | Whatever lands as a file in a directory (for example a bank statement). |
 
-Dazu: [`docs/connector-treue.md`](docs/connector-treue.md) — Auth-Muster, die verbindliche
-Bau-Disziplin und wann ein Upstream die bessere Wahl ist.
+In addition: [`docs/connector-treue.md`](docs/connector-treue.md) covers auth patterns, the binding build
+discipline and when an upstream is the better choice.
 
-## Wie eine Spec entsteht
+## How a spec is made
 
-1. **Integrationsart wählen** (Tabelle oben). Ein REST-Connector, der einen vorhandenen
-   MCP-Server in YAML nachbaut, ist doppelte Arbeit mit halber Abdeckung.
-2. **Doku zuerst.** Aus der offiziellen Anbieter-Dokumentation arbeiten — Endpunkt,
-   Parameter, Antwort **und die Kopfzeilen der Anfrage**. Die Doku-Stelle wird notiert,
-   nicht nur gelesen; sie gehört zum Beitrag.
-3. **Spec schreiben.** `version` ist Pflicht (SemVer). Die Werkzeug-Beschreibungen sind
-   ein **Produktmerkmal**, kein Beiwerk: Eine KI wählt allein danach aus, was sie
-   aufruft. Schreibende Werkzeuge werden einzeln als solche gekennzeichnet.
-4. **Live prüfen.** `jnpt connector check` läuft in vier Stufen bis zum echten Aufruf
-   gegen die echte API.
-5. **Belegen.** Was beobachtet wurde, gehört in den Beitrag — ohne Zugangsdaten und ohne
-   echte Daten.
+1. **Choose the kind of integration** (table above). A REST connector that rebuilds an existing MCP
+   server in YAML is double the work for half the coverage.
+2. **Documentation first.** Work from the vendor's official documentation: endpoint, parameters,
+   response **and the request headers**. The documentation reference is written down, not just read; it
+   is part of the contribution.
+3. **Write the spec.** `version` is mandatory (SemVer). The tool descriptions are a **product feature**,
+   not an afterthought: an AI decides what to call based on them alone. Writing tools are marked as such,
+   one by one.
+4. **Check live.** `jnpt connector check` runs in four stages, up to a real call against the real API.
+5. **Provide evidence.** What was observed belongs in the contribution, without credentials and without
+   real data.
 
-### Doku zuerst, dann live — und warum beides
+### Documentation first, then live, and why both
 
-**Doku zuerst** verhindert erfundene Aufrufe. **Live danach** verhindert den teureren
-Fehler: eine Spec, die *aussieht* wie die Dokumentation und trotzdem nicht funktioniert.
-Beides ist bei uns Lehrgeld, kein Prinzip — Endpunkte, die ohne den richtigen
-`Accept`-Header mit 400 antworten, Berechtigungen, die erst ressourcenseitig greifen,
-Fehlermeldungen, die „es gibt nichts" als „der Aufruf ist kaputt" ausgeben. Keiner dieser
-Fälle stand in einer Dokumentation.
+**Documentation first** prevents invented calls. **Live afterwards** prevents the more expensive mistake:
+a spec that *looks* like the documentation and still does not work. Both are lessons we paid for, not
+principles: endpoints that answer 400 without the right `Accept` header, permissions that only take
+effect on the resource side, error messages that report "there is nothing" as "the call is broken". None
+of these cases was in any documentation.
 
-**Der Live-Beleg ist Definition of Done — auch für Beiträge von außen.** Kein Werkzeug
-gilt als fertig ohne einen echten Erfolg gegen das echte System (200 beim Lesen,
-kontrollierter Erfolg beim Schreiben), beschrieben im Pull Request. Wer keinen echten
-Zugang zu dem System hat, sagt das: **Ein ungeprüfter Entwurf ist willkommen** — er wird
-dann als Entwurf geführt und nicht als geprüft zusammengeführt. Das ist keine Hürde
-gegen Beiträge, sondern die Zusage, dass hier nichts liegt, was nur auf dem Papier geht.
+**Live evidence is the definition of done, for outside contributions too.** No tool counts as finished
+without a real success against the real system (200 when reading, a controlled success when writing),
+described in the pull request. If you have no real access to the system, say so: **an untested draft is
+welcome.** It is then kept as a draft and not merged as verified. This is not a barrier to contributions;
+it is the promise that nothing here works only on paper.
 
-## Was ins Produkt gelangt
+## What reaches the product
 
-**Nur gegatete Specs.** Dieses Repository ist die Werkbank, nicht der Auslieferungskanal:
-Ein Merge hier ist noch keine Zusage, dass eine Spec im Produkt erscheint. Der Katalog im
-JanuaPort-Image ist eine **kuratierte Auswahl** — jede aufgenommene Spec durchläuft das
-Quality Gate der JanuaPort GmbH (Format, Sicherheits-Invarianten, Live-Beleg, Pflegezusage).
-Was hier liegt und nicht ausgeliefert wird, bleibt trotzdem nutzbar: Ein Betreiber kann
-jede Spec selbst in sein Connector-Verzeichnis legen.
+**Only gated specs.** This repository is the workbench, not the delivery channel: a merge here does not
+yet mean a spec will appear in the product. The catalogue in the JanuaPort image is a **curated
+selection**; every spec in it passes the quality gate of JanuaPort GmbH (format, security invariants, live
+evidence, maintenance commitment). A spec that is here but not shipped can still be used: an operator can
+place any spec in their own connector directory.
 
-## Stand der ausgelieferten Specs
+## Status of the shipped specs
 
-Ehrlich gekennzeichnet — „live belegt" heißt: gegen das echte System gelaufen, im
-Backlog dokumentiert.
+Status labels: **Built** · **In progress** · **Planned**. "Verified live" means: run against the real
+system and documented in the backlog.
 
-| Spec | Werkzeuge | Stand |
+| Spec | Tools | Status |
 |---|---|---|
-| [`demo-erp.yaml`](connector-specs/demo-erp.yaml) | 2, lesend | Attrappe für den Rundgang — spricht ein erfundenes ERP an, kein echtes System. Braucht das Beispiel-ERP aus dem Produkt-Repository. |
-| [`dokumente.yaml`](connector-specs/dokumente.yaml) | 4, lesend | **Live belegt (20.09.2026):** alle vier Prüfstufen grün, Suche über `/mcp` mit erwartetem Treffer, Audit mit redigiertem Suchbegriff. Vorlage — ein Wissensbereich je Integration. |
-| [`lexware-office.yaml`](connector-specs/lexware-office.yaml) | 6, davon 2 schreibend | **Lesen live belegt.** Die beiden schreibenden Werkzeuge (Beleg hochladen, Belegbild anheften) sind gebaut, **der Live-Beleg des Schreibwegs steht aus**. |
-| [`microsoft-graph-mail.yaml`](connector-specs/microsoft-graph-mail.yaml) | 5, davon 1 schreibend | **Live belegt (06./07.08.2026):** Lesen mit 200, Entwurf real angelegt samt Gegenprobe „nichts versendet". **Ein-Postfach-Grenze belegt (13.08.2026):** zweites, existierendes Postfach antwortet mit 403. Kein Sende-Werkzeug — bewusst. |
-| [`microsoft-graph-sharepoint.yaml`](connector-specs/microsoft-graph-sharepoint.yaml) | 4, lesend | **Live belegt am echten Tenant (25.08.2026):** 403 vor dem Site-Grant, 200 danach. Nur Metadaten, nie Datei-Inhalte. |
-| [`upstream-specs/github.yaml`](upstream-specs/github.yaml) | Allowlist | Ausgeliefert seit v0.2.0, Lese-Relay live belegt. Beispiel für das Instanz-Modell: dieselbe URL, verschiedene Zugänge und Allowlists. |
+| [`demo-erp.yaml`](connector-specs/demo-erp.yaml) | 2, read-only | **Built, demo only.** A mock for the walkthrough: it talks to an invented ERP, not a real system. Needs the example ERP from the product repository. |
+| [`dokumente.yaml`](connector-specs/dokumente.yaml) | 4, read-only | **Built.** Verified live (20 September 2026): all four check stages green, search via `/mcp` with the expected hit, audit entry with redacted search term. Template: one knowledge area per integration. |
+| [`lexware-office.yaml`](connector-specs/lexware-office.yaml) | 6, of which 2 write | **Built.** Reading verified live. The two writing tools (upload document, attach document image) are built; **live evidence of the write path is pending**. |
+| [`microsoft-graph-mail.yaml`](connector-specs/microsoft-graph-mail.yaml) | 5, of which 1 writes | **Built.** Verified live (6/7 August 2026): reading with 200, a draft actually created, with the counter-check "nothing sent". **Single-mailbox limit verified (13 August 2026):** a second, existing mailbox answers with 403. No send tool, deliberately. |
+| [`microsoft-graph-sharepoint.yaml`](connector-specs/microsoft-graph-sharepoint.yaml) | 4, read-only | **Built.** Verified live on a real tenant (25 August 2026): 403 before the site grant, 200 after it. Metadata only, never file contents. |
+| [`upstream-specs/github.yaml`](upstream-specs/github.yaml) | allowlist | **Built.** Shipped since v0.2.0, read relay verified live. Example of the instance model: the same URL, different access tokens and allowlists. |
 
-Betreiber-Anleitungen liegen für die beiden Graph-Connectoren bei
-([Postfach](docs/connector-microsoft-graph-mail.md),
-[SharePoint](docs/connector-microsoft-graph-sharepoint.md)) — sie beschreiben die
-Einrichtung auf der **Gegenseite** (App-Registrierung, Berechtigungen, Grenzen) und sind
-zugleich das Muster dafür, wie eine Spec dokumentiert sein sollte.
+Operator guides for the two Graph connectors are included
+([mailbox](docs/connector-microsoft-graph-mail.md),
+[SharePoint](docs/connector-microsoft-graph-sharepoint.md)). They describe the setup on the **other
+side** (app registration, permissions, limits) and are also the model for how a spec should be
+documented.
 
-## Hinweise zum Lesen
+## Notes for reading
 
-- **`#`-Nummern** (z. B. `#347`) verweisen auf das Backlog des Produkt-Repositoriums, das
-  heute geschlossen ist. Sie nennen die Herkunft einer Entscheidung und sind kein Link.
-- **„(Produkt-Doku, nicht öffentlich)"** markiert einen Verweis auf eine Datei, die im
-  geschlossenen Kern liegt. Der umgebende Absatz steht für sich; es fehlt nur die
-  Vertiefung.
-- **Für Datenbank- und Datei-Specs gibt es hier noch keine eigenständige
-  Beispieldatei** — das vollständige Beispiel steht jeweils im Format-Vertrag selbst
-  (Abschnitt „Vollständiges Beispiel"). Datei-Specs erzeugt das Produkt in aller Regel
-  selbst, sie werden nicht von Hand geschrieben.
+- **`#` numbers** (for example `#347`) refer to the backlog of the product repository, which is closed
+  today. They name where a decision came from and are not links.
+- **"(Produkt-Doku, nicht öffentlich)"** (product documentation, not public) marks a reference to a file
+  in the closed core. The surrounding paragraph stands on its own; only the deeper detail is missing.
+- **There is no stand-alone example file for database and file specs here yet.** The complete example
+  is in the format contract itself (section "Vollständiges Beispiel"). File specs are usually generated
+  by the product, not written by hand.
