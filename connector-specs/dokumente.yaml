@@ -1,0 +1,159 @@
+# Wissensspeicher hinter dem Tor (januaport-rag) — Suche in EINEM Wissensbereich
+# des lokalen RAG-Suchdienstes: Treffer-Passagen mit Quelle, Chunk-Kontext,
+# Dokument-Metadaten und Bereichsstatus (Issue #760, Rückläufer aus Epic #756).
+# Vier lesende Werkzeuge, Auth-Bucket A (statischer Bearer, docs/connector-catalog.md §1).
+#
+# API-Doku: https://github.com/JanuaPort/januaport-rag/blob/main/docs/suchdienst-api.md
+#           (§1 Endpunkte, §2 Beispielantworten, §3 Fehlerbilder — dort auch das
+#           `/openapi.json` des Dienstes, englische Beschreibungen)
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE — der Bereich steht in der `base_url`. Eine
+# Integration = ein Wissensbereich (die Governance-Grenze des Suchdienstes IST
+# der Bereich). Aktivierung heute per Datei-Kopie nach `JNPT_CONNECTORS_DIR`
+# mit GENAU DREI angepassten Zeilen:
+#   1. `name`      — Konvention `dokumente-<bereich>`, z. B. `dokumente-technik`
+#                     → die Werkzeuge heißen dann `dokumente_technik_search` usw.
+#   2. `base_url`  — Host des Suchdienstes + `/bereiche/<bereich>` (der Bereich
+#                     ist NIE ein Query- oder Pfad-PARAMETER, s. u.).
+#   3. `auth.credential` — Name des Vault-Secrets, das den `RAG_API_KEY` trägt
+#                     (`jnpt credential set --name dokumente-<bereich>-rag-key`).
+# Der Katalog-Weg (Admin-GUI/API) übernimmt die `base_url` erst mit #712 — bis
+# dahin ist die Datei-Kopie der Weg.
+#
+# ⚠️ WARUM NICHT `wissen-*`: `wissen` ist im Gateway reserviert
+# (docs/connector-spec.md, Tabelle „Oberste Ebene") — `wissen_search`/
+# `wissen_get` sind Basis-Werkzeuge auf JEDEM Zugang. Ein Connector `wissen-technik`
+# läge mit `wissen_technik_search` gefährlich nah an `wissen_search` (Routing-Falle
+# für ein kleines Modell) und würde bei künftiger Erweiterung von `wissen` selbst
+# kollidieren. `dokumente-<bereich>` vermeidet beides.
+#
+# ⚠️ WARUM DER BEREICH NIE EIN PARAMETER IST: Eine Team-Sicht (Scope) könnte
+# einen Bereich sonst nicht einschränken (#385) — wer `dokumente-technik:search`
+# bekommt, kann NUR in `technik` suchen, weil der Bereich in der `base_url` fest
+# verdrahtet ist, nicht weil ein Parameterwert es verspricht.
+#
+# `redact_params: [q]`: Suchbegriffe können Personenbezug tragen (der Suchdienst
+# selbst loggt `q` bewusst nicht, siehe API-Doku §1) — das Audit bleibt
+# systembezogen, nicht personenbezogen (docs/datenschutz-leitplanken.md).
+#
+# ⚠️ KEIN `privacy:`-BLOCK IN V1 — BEWUSST. Die Pseudonymisierung wirkt im
+# Gateway, BEVOR die KI den Text sieht, unabhängig vom Modell dahinter. Mit
+# einem LOKALEN Modell hinter dem Tor würden E-Mail-Adressen/Telefonnummern in
+# den EIGENEN Dokumenten zu Tokens — Verlust ohne Gewinn, denn es gibt niemanden
+# außerhalb, vor dem pseudonymisiert werden müsste. Wer stattdessen ein
+# CLOUD-Modell hinter das Tor stellt, ergänzt in seiner KOPIE bei `search` und
+# `get_chunk_context` genau diesen Block (hier nur als Kommentar, wörtlich zum
+# Einfügen):
+#
+#    privacy:
+#      scan:
+#        - { field: text, patterns: [iban, email, telefon] }
+#
+# FEHLERBILDER (kurz, Details: API-Doku §3):
+#   401 = Schlüssel fehlt/falsch — KEIN Grund im Body, kein Existenz-Orakel
+#         (ein unbekannter Bereich antwortet mit falschem Schlüssel genauso 401
+#         wie ein echter).
+#   404 = Bereich/Chunk/Dokument unbekannt (unterscheidet nicht zwischen „gibt
+#         es nicht" und „gehört zu einem anderen Bereich").
+#   422 = `top_k` > 20 oder `q` < 2 Zeichen.
+#   503 = Index (Qdrant) oder Embedding (Ollama) nicht erreichbar — adressenlos,
+#         nie eine interne URL im Fehlertext.
+#
+# TLS vor dem Dienst ist Sache des Verteilers (HAProxy/nginx, LAN-intern), nicht
+# des Connectors — `http://` im LAN ist hier der belegte Normalfall.
+#
+# Bewusst NICHT drin (Scope-Grenzen #760): kein `timeout` (Default 30s reicht,
+# der Dienst antwortet nach warmem Ollama/Qdrant in <0,1s), kein `min_interval`
+# (kein dokumentiertes Rate-Limit), kein `privacy`-Block (s. o.), kein
+# `headers`-Block (nur `Authorization: Bearer …`, `Accept` setzt die Runtime
+# ohnehin), kein `write`-Tool (der Suchdienst ist rein lesend), kein
+# Bereich-Parameter (s. o.).
+
+name: dokumente
+# Fassung dieser Vorlage (Story #427) — siehe demo-erp.yaml für die Bedeutung.
+version: "1.0.0"
+description: >
+  Wissensspeicher hinter dem Tor (januaport-rag): Suche in EINEM Wissensbereich
+  des lokalen RAG-Suchdienstes — Treffer-Passagen mit Quelle, Chunk-Kontext,
+  Dokument-Metadaten und Bereichsstatus. Ein Bereich = eine Integration.
+base_url: http://rag.intern.example:8090/bereiche/technik
+
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  # PLATZHALTER — durch den Namen des eigenen Vault-Secrets ersetzen
+  # (jnpt credential set --name dokumente-<bereich>-rag-key). Der Wert steht
+  # nie in dieser Datei.
+  credential: dokumente-rag-key
+
+redact_params: [q]
+
+tools:
+  - name: search
+    description: >
+      Hybrid search (vector + keyword) over the documents ingested into this
+      knowledge area. Returns up to `top_k` passages ranked by fused relevance
+      score (not raw cosine similarity), each with its source file, page,
+      section heading and the full chunk text. Use `q` with at least 2
+      characters describing what you are looking for, not a full sentence
+      question. Results may overlap between adjacent chunks (ingest-time
+      overlap). No pagination; call again with a narrower `q` if you need more.
+    params:
+      - name: q
+        type: string
+        required: true
+        description: "Search terms, minimum 2 characters. May contain personal data, not logged."
+      - name: top_k
+        type: integer
+        description: "Number of results to return. Default 5, maximum 20."
+    request:
+      method: GET
+      path: /search
+      query:
+        - { name: q, value: "{q}" }
+        - { name: top_k, value: "{top_k}" }
+    response: treffer
+
+  - name: get_chunk_context
+    description: >
+      Returns one specific chunk (by its id, taken from a prior search result)
+      together with up to `context` neighboring chunks from the same document
+      (same position plus/minus context), to read more text around a hit.
+      Does not return the whole document.
+    params:
+      - name: id
+        type: string
+        required: true
+        description: "Chunk id from a previous search result."
+      - name: context
+        type: integer
+        description: "Number of neighboring chunks on each side. Default 0, maximum 3."
+    request:
+      method: GET
+      path: /chunks/{id}
+      query:
+        - { name: context, value: "{context}" }
+
+  - name: get_document_info
+    description: >
+      Returns metadata for one source document by its content hash (from a
+      search result): original path, file name, number of chunks in the
+      index, and when it was last ingested. Does not return the document text.
+    params:
+      - name: dokument_hash
+        type: string
+        required: true
+        description: "Document content hash from a search result."
+    request:
+      method: GET
+      path: /documents/{dokument_hash}
+
+  - name: get_area_status
+    description: >
+      Returns whether this knowledge area's index is reachable and how many
+      indexed passages it currently holds. Use to sanity-check the area
+      before running many searches. No parameters.
+    check: true
+    request:
+      method: GET
+      path: /status

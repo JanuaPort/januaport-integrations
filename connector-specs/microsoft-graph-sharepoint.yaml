@@ -1,0 +1,319 @@
+# SharePoint-Dokumentbibliotheken EINER Site über Microsoft Graph (v1.0) —
+# read-only und NUR METADATEN. KEIN DATEI-INHALT, KEIN DOWNLOAD, KEIN SCHREIBEN
+# (Story #551, PO-Go 20.08.2026, v1-Schnitt des Connector-Brains).
+#
+# API:        https://graph.microsoft.com
+# Doku:       Site holen (Adressierung {hostname}:/{server-relative-path})
+#             https://learn.microsoft.com/en-us/graph/api/site-get?view=graph-rest-1.0
+#             Bibliotheken (Drives) einer Site auflisten
+#             https://learn.microsoft.com/en-us/graph/api/drive-list?view=graph-rest-1.0
+#             Ordnerinhalt auflisten
+#             https://learn.microsoft.com/en-us/graph/api/driveitem-list-children?view=graph-rest-1.0
+#             Element (driveItem) holen
+#             https://learn.microsoft.com/en-us/graph/api/driveitem-get?view=graph-rest-1.0
+#             driveItem-Ressource (Facetten + Instanz-Attribute)
+#             https://learn.microsoft.com/en-us/graph/api/resources/driveitem?view=graph-rest-1.0
+#             Sites.Selected + per-Site-Grant (das Berechtigungsmodell)
+#             https://learn.microsoft.com/en-us/graph/permissions-selected-overview
+#             https://learn.microsoft.com/en-us/graph/api/site-post-permissions?view=graph-rest-1.0
+#             Blättern in Graph-Antworten (@odata.nextLink / $skipToken)
+#             https://learn.microsoft.com/en-us/graph/paging
+#             App-only-Token (Client-Credentials)
+#             https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow
+# Anleitung:  docs/connector-microsoft-graph-sharepoint.md (App-Registrierung,
+#             Admin-Consent Sites.Selected, Site-Grant, Credential in den Vault)
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE. Drei Werte sind mandantenspezifisch und
+# stehen hier als Platzhalter: `token_url` und `client_id` als Null-GUID sowie
+# die SITE-ADRESSE in den Pfaden von `get_site` und `list_libraries`
+# (`contoso.sharepoint.com:/sites/Belegablage` — der Beispiel-Host der
+# Microsoft-Doku). Vor dem Einsatz alle drei durch die eigenen Werte ersetzen;
+# die Datei bleibt dabei einchecktauglich: das CLIENT SECRET steht NIE hier,
+# sondern nur im Vault unter dem Namen "microsoft-graph-sharepoint".
+#
+# ⚠️ EINE INTEGRATION = EINE SITE. Die Governance-Grenze von `Sites.Selected`
+# IST die Site — deshalb steht ihre Adresse fest in der Spec und ist kein
+# Tool-Parameter. Wer eine zweite Site anbinden will, legt eine zweite
+# Integration mit eigenem Credential und eigenem Grant an (Instanz-Modell), statt
+# hier einen Parameter zu ergänzen. Wer statt der Adressform lieber die einmalig
+# aufgelöste Site-ID (`contoso.sharepoint.com,<guid>,<guid>`) einsetzt: Sie passt
+# an dieselbe Stelle — dann entfällt in `list_libraries` der ABSCHLIESSENDE
+# Doppelpunkt (`/v1.0/sites/<id>/drives`), er gehört zur Pfad-Adressierung.
+#
+# ⚠️ OHNE PER-SITE-GRANT IST DIE EINRICHTUNG NICHT FERTIG — und das ist hier
+# nicht die Ausnahme, sondern das Prinzip. `Sites.Read.All` (Anwendung) wäre
+# mandantenweit und damit die FALSCHE Berechtigung (dieselbe Falle wie
+# `Mail.ReadWrite` ohne Exchange-Grenze beim Mail-Connector). Richtig ist
+# `Sites.Selected`: Der Admin-Consent allein gibt NULL Zugriff; erst ein
+# per-Site-Grant durch einen Tenant-Admin
+# (`POST /sites/{siteId}/permissions`, Body mit `"roles": ["read"]` und unserer
+# Client-ID) öffnet genau eine Site. Der Grant vererbt sich auf alle Drives und
+# Dateien dieser Site („Permissions at the site collection level do not break
+# inheritance"); datei-/listen-granulare Grants
+# (`Files.SelectedOperations.Selected` u. ä.) verwenden wir bewusst NICHT — sie
+# brechen die Vererbung pro Objekt. Fehlt der Grant, antwortet Graph mit 403;
+# die Runtime unterscheidet das seit #367 sauber von 401 („Freigabe prüfen",
+# nicht „Credential erneuern"). Schritt 4 der Anleitung.
+#
+# ⚠️ `@microsoft.graph.downloadUrl` KOMMT IN DIESEM CONNECTOR NIRGENDS VOR —
+# weder in einem `$select` noch in einer Projektion. Das Feld ist laut
+# Graph-Doku eine VORAUTHENTIFIZIERTE URL: „A URL that can be used to download
+# this file's content. Authentication isn't required with this URL." Wer sie zu
+# sehen bekommt — der Agent, das Audit-Log, ein Chat-Transkript, ein
+# weitergeleiteter Screenshot — lädt die Datei an JEDER JanuaPort-Prüfung vorbei,
+# bis sie (nach etwa einer Stunde) abläuft. Drei Sicherungen, alle Pflicht:
+#   1. Kein `$select` fordert das Feld an (Graph liefert Instanz-Attribute nur
+#      dann zuverlässig nicht, wenn niemand danach fragt),
+#   2. JEDE `response` ist eine explizite JMESPath-WHITELIST — was nicht
+#      aufgezählt ist, erreicht den Agenten nicht. Das ist nicht doppelt gemoppelt:
+#      `$select` entfernt die `@…`-Metafelder nachweislich nicht zuverlässig
+#      (#368: live kamen `@odata.context`/`@odata.etag` ungefragt durch),
+#   3. dieser Kommentar. Die RUNTIME HAT KEINE TECHNISCHE SPERRE für solche
+#      Felder — es ist Spec-Disziplin. Wer hier künftig ein Feld ergänzt, prüft
+#      zuerst, ob es ein vorauthentifizierter Zugriffsweg ist.
+# `webUrl` ist bewusst dabei: eine normale, authentifizierungspflichtige
+# SharePoint-URL — ein Mensch muss sich anmelden, um sie zu öffnen.
+#
+# ⚠️ EHRLICHE GRENZE: v1 LIEST KEINEN DATEI-INHALT. `GET …/content` antwortet
+# immer mit 302 auf ebenjene vorauthentifizierte URL. Unsere Runtime folgt
+# Redirects bewusst NICHT (#119) und akzeptiert nur JSON-Antworten (1-MiB-Deckel)
+# — ein „CSV lesen"-Tool wäre kein Spec-Zuschnitt, sondern ein Runtime-Umbau an
+# zwei Invarianten mit Wirkung auf ALLE Connectoren. Der Weg für Datei-INHALTE
+# ist der gebaute: ein Beisteller holt die Dateien ins kontrollierte Verzeichnis
+# (#521), dort läuft der Inhalt durch die Privacy-Tokenisierung. Dieser Connector
+# liefert Sichtbarkeit und Governance über die Bibliothek — was liegt da, seit
+# wann, wie groß —, und der Mensch öffnet per `webUrl`.
+#
+# ENVELOPE-ABGLEICH gegen die Graph-Doku (#73-Lehre — die Runtime-Header sind
+# Runtime-Sache, die fachlichen deklariert die Spec seit #347):
+#   * `Authorization: Bearer <token>` — Doku-Pflicht an allen vier Endpunkten;
+#     die Runtime setzt ihn aus `auth.template`, der Token kommt app-only aus
+#     `internal/oauth2cc`.
+#   * `Accept: application/json` — die Runtime setzt ihn auf JEDEN Request
+#     (#73). Graph verlangt ihn hier nicht, es schadet aber nicht: Graph
+#     antwortet ohnehin JSON.
+#   * Kein `Content-Type`/`Content-Length` — alle vier Tools sind GET ohne Body.
+#   * Weitere Pflicht-Header nennt die Doku an diesen Lese-Endpunkten nicht;
+#     `if-none-match` ist optional (ETag-Caching) und wird bewusst nicht genutzt.
+#   * Deshalb gibt es in dieser Spec KEINEN `headers:`-Block (#347) — es gäbe
+#     nichts zu deklarieren.
+#
+# RATE LIMITS — ehrlich: SharePoint sendet **keine** `RateLimit-*`-Header (die
+# aktuelle Doku widerspricht dem 2022er-Devblog); verlässlich ist allein
+# `Retry-After` bei 429/503. Heute macht die Runtime EINEN Versuch ohne Rückzug
+# und reicht den 429 als Upstream-Fehler an den Agenten durch — die bekannte,
+# bewusste Grenze aus #397, deren Umsetzung #485 ist. `min_interval: 200ms` ist
+# eine konservative Selbstbremse (~5 Aufrufe/s), keine Zusage.
+#
+# BEWUSST NICHT DRIN (Scope-Grenzen #551): kein Content-/Download-Tool, kein
+# Schreib-Tool (kein Hochladen, kein Anlegen, kein Verschieben), keine Suche,
+# kein Auto-Paging (der Agent blättert über `top`/`skiptoken`), keine Versionen/
+# Berechtigungen/Listen-Elemente, keine zweite Site, keine zweite
+# Graph-App-Fläche (nur `Sites.Selected`), kein `privacy:`-Block (Datei- und
+# Ordnernamen können personenbezogen sein; welche Felder pseudonymisiert
+# gehören, ist eine eigene fachliche Bewertung — #328).
+#
+# KEIN `redact_params`: Die Parameter dieses Connectors sind ausschließlich
+# technische Kennungen (drive_id, folder_id, item_id) und Blätter-Werte. Sie
+# tragen keine Freitext-Eingabe und sind im Audit genau das, was einen Aufruf
+# nachvollziehbar macht („welche Bibliothek, welcher Ordner").
+
+name: microsoft-graph-sharepoint
+# Fassung dieser Vorlage (Story #427) — siehe demo-erp.yaml für die Bedeutung.
+version: "1.0.0"
+description: >
+  SharePoint document libraries of ONE site via Microsoft Graph: list the
+  libraries, browse folders and read item METADATA. Read-only and app-only;
+  this connector never returns file content and never a download link.
+base_url: https://graph.microsoft.com
+
+auth:
+  # App-only (Client-Credentials): JanuaPort holt den Access-Token selbst beim
+  # Token-Endpoint. Kein Mensch im Kreis, keine an eine Sitzung gebundene
+  # Anmeldung — die Voraussetzung für einen unbeaufsichtigten Prozess.
+  type: oauth2_client_credentials
+  header: Authorization
+  template: "Bearer {{credential}}"
+  # Vault-Name des CLIENT SECRET (jnpt credential set --name microsoft-graph-sharepoint).
+  # EIGENES Credential, nicht das der Mail-App: Ein Secret, das Postfach UND
+  # Dokumente kann, widerspräche der Least-Privilege-Linie, die die Mail-Spec
+  # selbst vorlebt. Der Wert steht nie in dieser Datei.
+  credential: microsoft-graph-sharepoint
+  # PLATZHALTER — durch die eigene Mandanten-ID ersetzen.
+  token_url: https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/oauth2/v2.0/token
+  # PLATZHALTER — durch die Anwendungs-(Client-)ID der App-Registrierung ersetzen.
+  # Kein Secret, gehört deshalb in die Spec. Dieselbe ID steht im Site-Grant.
+  client_id: "00000000-0000-0000-0000-000000000000"
+  # Bei Graph app-only ist .default der richtige (und einzige) Scope: er fordert
+  # genau die Berechtigungen an, die dem Dienstprinzipal zugewiesen sind.
+  scopes: ["https://graph.microsoft.com/.default"]
+
+timeout: 30s
+min_interval: 200ms
+
+tools:
+  - name: get_site
+    description: >
+      Returns the ONE SharePoint site this integration is bound to: id,
+      displayName, name, webUrl and the creation / last-modified timestamps.
+      The site address is fixed in the connector configuration — there is no
+      parameter for it, and no other site of the tenant can be reached through
+      this integration.
+      Use it to get the site's webUrl for a human, and as the first call when
+      something looks wrong: it is also the probe call of the operator's
+      connector check. An HTTP 403 here does NOT mean a broken credential — it
+      means this application has not been granted access to this site (a
+      tenant administrator does that once, per site).
+    # Der Probe-Aufruf für `jnpt connector check` (Stufe 3) und für
+    # `jnpt connector selftest` — parameterlos, weil die Site fest ist. Genau
+    # dieser Aufruf ist zugleich der Live-Beleg dafür, dass der Sites.Selected-
+    # Grant greift (und die Gegenprobe gegen eine NICHT gegrantete Site ein 403).
+    check: true
+    request:
+      method: GET
+      # PLATZHALTER (Site-Adresse) — Form: /v1.0/sites/{hostname}:/{server-relative-path}
+      # Beispiel aus der Microsoft-Doku: contoso.sharepoint.com:/teams/1drvteam.
+      path: "/v1.0/sites/contoso.sharepoint.com:/sites/Belegablage"
+      # Bewusst OHNE `$select`: Die Doku nennt für „Get a site" keine optionalen
+      # Query-Parameter. Die Verengung leistet hier allein die Projektion — und
+      # die ist ohnehin die verlässlichere der beiden (s. Kopf).
+    # Whitelist: genau die im Tool-Text genannten Felder. Abgeschnitten werden
+    # damit u. a. `@odata.context`, `siteCollection`, `root`, `isPersonalSite`.
+    response: >-
+      {id: id, displayName: displayName, name: name, webUrl: webUrl,
+      createdDateTime: createdDateTime, lastModifiedDateTime: lastModifiedDateTime}
+
+  - name: list_libraries
+    description: >
+      Lists the document libraries of the site. Returns for each library: id
+      (pass it on as drive_id), name, webUrl and driveType (a normal SharePoint
+      document library reads "documentLibrary").
+      Most sites have exactly one library, often called "Documents" or
+      "Dokumente"; additional libraries appear here as separate entries. This is
+      the entry point: pick a library here, then browse it with list_children.
+      Metadata only — no file contents, no download links.
+    request:
+      method: GET
+      # PLATZHALTER (Site-Adresse) wie bei get_site. Der ABSCHLIESSENDE
+      # Doppelpunkt beendet die Pfad-Adressierung der Site, damit `/drives`
+      # als Beziehung dahinter steht.
+      path: "/v1.0/sites/contoso.sharepoint.com:/sites/Belegablage:/drives"
+      query:
+        # Fester $select (die Doku nennt ihn für diesen Endpunkt ausdrücklich
+        # als unterstützt): kleinere Antworten und eine Antwortform, die der
+        # Tool-Text vollständig benennen kann. Ohne ihn kämen u. a. `owner` und
+        # `quota` mit — Betriebsdaten, die kein Werkzeug hier braucht.
+        - name: "$select"
+          value: "id,name,webUrl,driveType"
+    response: >-
+      {libraries: value[*].{id: id, name: name, webUrl: webUrl,
+      driveType: driveType}}
+
+  - name: list_children
+    description: >
+      Lists the direct children — files and folders — of ONE folder in ONE
+      document library. Returns per entry: id (pass it on as folder_id or
+      item_id), name, size in bytes, lastModifiedDateTime (ISO 8601, UTC), then
+      EITHER a file facet (with mimeType — the entry is a file) OR a folder
+      facet (with childCount — the entry is a folder); exactly one of the two is
+      filled, the other comes back as null. Plus parent_path (where the entry
+      sits, e.g. "/drive/root:/Kontoauszuege") and webUrl.
+      THERE IS NO FILE CONTENT HERE and no download link — this connector reads
+      metadata only. Never promise a user the content of a file; give them the
+      webUrl instead, which opens the item in SharePoint after they sign in.
+      PAGING is manual and deliberate: top sets the page size. If more entries
+      exist, the answer carries naechste_seite — Graph's own URL for the next
+      page; if it is null, you have seen the whole folder. Take the value of the
+      $skiptoken query parameter out of that URL and pass it as skiptoken to get
+      the next page; there is no numeric page or offset for this collection, and
+      this tool never follows the link by itself.
+    params:
+      - name: drive_id
+        description: >
+          Required. The id of the document library, exactly as list_libraries
+          returned it.
+        type: string
+        required: true
+      - name: folder_id
+        description: >
+          Required. The folder to list. For the TOP LEVEL of the library pass
+          the reserved id "root"; for anything below it, pass the id of a folder
+          entry from an earlier call of this tool (an entry with a folder
+          facet). Pass the id exactly as it came back — JanuaPort escapes it for
+          the URL itself.
+        type: string
+        required: true
+      - name: top
+        description: >
+          Optional. Page size. 50 is a sensible value; 200 is Graph's own page
+          size for this collection and the practical maximum here. Keep it
+          moderate: a very large response is refused by JanuaPort (1 MiB limit).
+        type: integer
+      - name: skiptoken
+        description: >
+          Optional. The continuation token for the NEXT page. Take it from the
+          naechste_seite URL of the previous answer — it is the value of the
+          $skiptoken parameter in that URL — and pass it through unchanged. It
+          is opaque: do not build one yourself, and do not reuse it against a
+          different folder.
+        type: string
+    request:
+      method: GET
+      path: /v1.0/drives/{drive_id}/items/{folder_id}/children
+      query:
+        # Fester $select: genau die Felder, die der Tool-Text benennt.
+        # `@microsoft.graph.downloadUrl` steht hier bewusst NICHT (s. Kopf).
+        - name: "$select"
+          value: "id,name,size,file,folder,lastModifiedDateTime,parentReference,webUrl"
+        - name: "$top"
+          value: "{top}"
+        # Die Doku schreibt den Parameter `$skipToken`; Graphs eigener
+        # `@odata.nextLink` trägt ihn kleingeschrieben. Der WERT ist derselbe —
+        # nur ihn braucht der Agent. Fehlt er, entfällt der Query-Parameter ganz.
+        - name: "$skipToken"
+          value: "{skiptoken}"
+    # Whitelist je Eintrag plus der nächste Seitenlink. Abgeschnitten werden
+    # damit `@odata.context`, `@odata.etag`, `cTag`, `createdBy`/
+    # `lastModifiedBy` (Personenbezug ohne Zweck hier) — und vor allem
+    # `@microsoft.graph.downloadUrl`. Von `parentReference` bleibt allein `path`.
+    response: >-
+      {items: value[*].{id: id, name: name, size: size, file: file,
+      folder: folder, lastModifiedDateTime: lastModifiedDateTime,
+      parent_path: parentReference.path, webUrl: webUrl},
+      naechste_seite: "@odata.nextLink"}
+
+  - name: get_item
+    description: >
+      Returns the metadata of ONE file or folder of a document library by its
+      id: id, name, size in bytes, lastModifiedDateTime, the file facet (with
+      mimeType) or the folder facet (with childCount) — the other one is null —,
+      parent_path and webUrl. The same fields list_children delivers, for a
+      single item.
+      NO CONTENT: this tool cannot read, download or return the bytes of a file,
+      and it deliberately never returns a download link. What it answers is
+      "this item exists, it is this big, it changed at this time, and a human
+      finds it here" — the webUrl opens it in SharePoint after sign-in.
+    params:
+      - name: drive_id
+        description: >
+          Required. The id of the document library the item lives in, as
+          returned by list_libraries (or as parentReference told you).
+        type: string
+        required: true
+      - name: item_id
+        description: >
+          Required. The id of the file or folder, as returned by list_children.
+          Pass it exactly as it came back — JanuaPort escapes it for the URL
+          itself.
+        type: string
+        required: true
+    request:
+      method: GET
+      path: /v1.0/drives/{drive_id}/items/{item_id}
+      query:
+        - name: "$select"
+          value: "id,name,size,file,folder,lastModifiedDateTime,parentReference,webUrl"
+    response: >-
+      {id: id, name: name, size: size, file: file, folder: folder,
+      lastModifiedDateTime: lastModifiedDateTime,
+      parent_path: parentReference.path, webUrl: webUrl}
