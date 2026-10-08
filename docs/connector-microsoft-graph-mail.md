@@ -63,8 +63,9 @@ aus der Eingabe der KI. Grund: Die Ablage ist üblicherweise eine
 Windows-Freigabe im Kundennetz, und eine frei gewählte Endung hieße, dass eine
 eingehende Mail dort ein `.ps1`/`.exe` platzieren lassen könnte.
 
-Wie `create_draft` ist es ein **Schreib**-Werkzeug: ein Mensch muss es
-bestätigen, und es braucht den **tool-genauen** Scope
+Wie `create_draft` ist es ein **Schreib**-Werkzeug: Es ist als solches
+annotiert (der Client kann nachfragen, JanuaPort selbst fragt nie), und
+es braucht den **tool-genauen** Scope
 `microsoft-graph-mail:save_attachment` — ein Scope auf die ganze Integration
 deckt es nicht (Schritt 5 unten). Es rührt das Postfach nicht an (nichts wird
 gelöscht, verschoben oder als gelesen markiert) und wertet den Inhalt nicht aus
@@ -383,9 +384,24 @@ die Admin-Oberfläche. Typische Antworten und was sie bedeuten:
   - **Gelesen werden** die Textebene eines PDF, das in einer E-Rechnung
     (ZUGFeRD/Factur-X) eingebettete XML, sowie XML, Text, CSV und JSON, wie sie
     sind.
-  - **Nicht gelesen werden** Word, Excel, Bilder, `.eml` und ZIP. Sie kommen mit
+  - **Auch Word, Excel und PowerPoint** (`docx`, `xlsx`, `pptx`, `kind`
+    entsprechend): Word als Absätze, Excel Blatt für Blatt
+    (`## Blatt: <Name>`, Zellen durch Tab, Zahlen roh, Datumswerte als
+    Excel-Seriennummer), PowerPoint Folie für Folie (`## Folie N`). Erkannt
+    am Inhalt, nicht am `contentType` des Absenders; gedeckelt gegen
+    Zip-Bomben. Für den Text gelten dieselben Pseudonymisierungs-Regeln wie
+    für PDF-Text. Gelesen, nie ausgeführt: Makros, eingebettete Objekte und
+    Formeln werden nicht angefasst.
+  - **Nicht gelesen werden** alte Office-Dateien (`.doc`, `.xls`, `.ppt`),
+    passwortgeschützte Office-Dateien, Bilder, `.eml` und ZIP. Sie kommen mit
     Typ und Größe zurück und der ausdrücklichen Auskunft, dass der Inhalt nicht
     zu lesen ist — damit kein Agent ihn rät.
+  - **Die Vorlage steht dafür auf Fassung 2.0.1** (nur die Beschreibung von
+    `read_attachment`), seit dem neuen Satz für Schreibwerkzeuge auf 2.0.2
+    (nur die Beschreibung von `create_draft`). ⚠️ Eine bestehende
+    Mail-Integration ist eine KOPIE der Vorlage in der Datenbank und behält den
+    alten Text, bis der Betreiber sie anhebt. Gelesen wird Office trotzdem
+    sofort — der alte Text verspricht nur weniger, als das Werkzeug kann.
   - **Ein gescanntes PDF hat keine Textebene.** Dann kommt leerer Text plus eine
     Notiz, die das sagt. **Es gibt kein OCR** in dieser Version.
   - **Ein verschlüsseltes PDF wird nicht gelesen.** Das gilt auch für Dateien,

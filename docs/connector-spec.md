@@ -504,9 +504,12 @@ verbuchen/löschen".
 tools:
   - name: upload_voucher_file
     description: >
-      Uploads a receipt FILE into the inbox. This is a WRITE action — a human
-      must confirm before calling. The file is base64 in "content" (max 5 MiB
-      decoded); provide "filename" and "content_type". Returns the new file id.
+      Uploads a receipt FILE into the inbox. This is a WRITE action. It is
+      annotated as such, so your client may ask the user; JanuaPort itself
+      never asks. It needs the tool-exact permission
+      "lexware-office:upload_voucher_file". The file is base64 in "content"
+      (max 5 MiB decoded); provide "filename" and "content_type". Returns the
+      new file id.
     write: true                       # markiert das Tool als schreibend
     params:
       - name: content
@@ -577,8 +580,43 @@ die Inbox legt. Inbox vs. anheften: `get_voucher` liefert ein `files`-Array
   versehentlich Schreibrechte.
 - **Bestätigung:** Schreibende Tools tragen MCP-Annotations
   (`readOnlyHint:false`), sodass ein Client (z. B. Cowork) vor dem Aufruf
-  nachfragen kann. Schreibe in die Description ausdrücklich, dass ein Mensch
-  bestätigen muss.
+  nachfragen kann. In die Description gehört der einheitliche **Kernsatz**
+  (wörtlich, mit dem tool-genauen Scope):
+
+  > This is a WRITE action. It is annotated as such, so your client may ask
+  > the user; JanuaPort itself never asks. It needs the tool-exact permission
+  > "`<integration>:<tool>`".
+
+  Nur ein Werkzeug, das **tatsächlich** Geld bewegt oder nach außen wirkt
+  (z. B. eine Mail versendet, eine Zahlung auslöst), bekommt einen zweiten
+  Satz (Satz B):
+
+  > It runs without a chat question once a human approved this process at
+  > setup (use case and AI mandate); the tool-exact permission is the
+  > boundary.
+
+  Begründung: Die Freigabe geschieht einmal, wenn ein Mensch den Prozess
+  aufsetzt (Use Case und KI-Mandat); eine Einzelbestätigung je Aufruf gibt es
+  nicht, die Grenze ist das tool-genaue Recht.
+
+  **Verbindlich:** Satz B steht nur dort, wo das Werkzeug es wirklich tut. Die
+  frühere Wenn-Formulierung („If this moves money or leaves the company …")
+  ist verboten — an einem Werkzeug, das es nie tut, ist sie Rauschen, das die
+  KI bremst. Einen Beleg ablegen, eine Datei anhängen, einen Entwurf anlegen
+  oder eine Mail verschieben bewegt kein Geld und wirkt nicht nach außen. In
+  der heute ausgelieferten Fläche trägt den Satz deshalb kein Werkzeug. Ein
+  Test im Produkt pinnt den Kernsatz an jedem Schreibwerkzeug der
+  ausgelieferten Vorlagen, lässt Satz B nur an ausdrücklich gelisteten Sende-
+  oder Zahlwerkzeugen zu und verbietet die alte Wenn-Formulierung in jedem
+  Werkzeugtext.
+
+  **Warum nicht „a human must confirm":** JanuaPort fragt nie selbst; fragen
+  kann nur der Client über die Annotation. Ein produktiver Agent, der „ein
+  Mensch muss bestätigen" liest, wartet auf eine Bestätigung, die nie kommt.
+  Eine Freigabe ist ein Auftrag des Menschen — ein Schritt in der
+  Arbeitsliste oder eine ausdrückliche Anweisung —, keine Rückfrage im Chat.
+  Derselbe Test verbietet den alten Satz in jeder Werkzeug- und
+  Parameterbeschreibung.
 - **Audit:** Der Aufruf wird als schreibend markiert (`jnpt audit list --write`).
   Scheitert das Schreiben des Audit-Events **nach** dem Upload, sieht der Agent
   einen Fehler, obwohl die Datei evtl. schon hochgeladen wurde — die Meldung
@@ -596,7 +634,9 @@ tools:
   - name: create_draft
     description: >
       Creates a DRAFT email in the user's mailbox — it is NOT sent. This is a
-      WRITE action; a human must confirm before calling.
+      WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "microsoft-graph-mail:create_draft".
     write: true                       # JSON-Body ist immer ein Schreibvorgang
     params:
       - name: mailbox

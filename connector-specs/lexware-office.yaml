@@ -45,7 +45,12 @@
 
 name: lexware-office
 # Fassung dieser Vorlage (Story #427) — siehe demo-erp.yaml für die Bedeutung.
-version: "1.0.1"
+# 1.0.2: NUR die Beschreibungen der beiden Schreibwerkzeuge — Kernsatz statt
+# „a human must confirm", ohne Autonomie-Sperre und ohne Zusatzsatz zu
+# Geld/Außenwirkung (einen Beleg ablegen bzw. anhängen tut beides nicht; siehe
+# docs/connector-spec.md, „Bestätigung"). Keine Flächen-Änderung, deshalb PATCH
+# (reine Beschreibung ist ein Fix).
+version: "1.0.2"
 description: >
   Lexware Office accounting: read vouchers, invoices and contacts, plus attach
   receipt files to the inbox or to an existing voucher.
@@ -284,10 +289,11 @@ tools:
   - name: upload_voucher_file
     description: >
       Uploads a receipt/document FILE into the Lexware Office voucher inbox
-      ("Belegerfassung"), so Lexware can attach it to a booking. This is a
-      WRITE/MUTATING action: it creates a new file in the account's inbox.
-      IMPORTANT — a human must confirm this upload before it is performed; do
-      not call it autonomously. The file is sent as base64 in the "content"
+      ("Belegerfassung"), so Lexware can attach it to a booking. It creates a
+      new file in the account's inbox. This is a WRITE action. It is annotated
+      as such, so your client may ask the user; JanuaPort itself never asks.
+      It needs the tool-exact permission "lexware-office:upload_voucher_file".
+      The file is sent as base64 in the "content"
       parameter (max 5 MiB after decoding); provide a sensible "filename" and
       the file's "content_type" (e.g. application/pdf, image/jpeg, image/png).
       The document lands in the inbox only — it is NOT booked or matched to a
@@ -347,10 +353,11 @@ tools:
     description: >
       Attaches a receipt/document FILE to an EXISTING, already-booked voucher in
       Lexware Office (e.g. a purchase voucher found via list_vouchers/get_voucher
-      whose "files" array is empty — booked without a receipt image). WRITE/MUTATING:
+      whose "files" array is empty — booked without a receipt image). It
       uploads the file and ASSIGNS it to the voucher identified by voucher_id
-      (POST /v1/vouchers/{id}/files). A human must confirm before it is performed;
-      do not call autonomously.
+      (POST /v1/vouchers/{id}/files). This is a WRITE action. It is annotated
+      as such, so your client may ask the user; JanuaPort itself never asks.
+      It needs the tool-exact permission "lexware-office:attach_file_to_voucher".
       Use this when a booked voucher is MISSING its document image. To merely drop a
       NEW receipt into the inbox (Belegerfassung) for a not-yet-booked expense, use
       upload_voucher_file instead — IF it appears in your tool list (as a write

@@ -123,7 +123,12 @@ name: microsoft-graph-mail
 # 2.0.0 (#703): ZWEI NEUE WERKZEUGE sind eine Flächen-Änderung, und der
 # Flächen-Wächter (internal/connector/surface.go) weist eine PATCH-/MINOR-Anhebung
 # dafür fail-closed ab.
-version: "2.0.0"
+# 2.0.1: NUR die Beschreibung von read_attachment — es liest jetzt auch Word,
+# Excel und PowerPoint (docx/xlsx/pptx). Keine Flächen-Änderung, deshalb PATCH
+# (reine Beschreibung ist ein Fix).
+# 2.0.2: NUR die Beschreibung von create_draft — Kernsatz statt „a human must
+# confirm", ohne „do not call it autonomously". Fix, deshalb PATCH.
+version: "2.0.2"
 description: >
   Microsoft 365 mailbox via Microsoft Graph: read the messages of ONE mailbox,
   read the TEXT CONTENT of their attachments, and put a draft into it. App-only
@@ -403,8 +408,14 @@ tools:
       HONESTLY, WHAT YOU GET: the text layer of a PDF · the XML embedded in a
       PDF/A-3 invoice (ZUGFeRD/Factur-X — it arrives in embedded[] and is the
       RELIABLE source for amounts and invoice numbers, better than the page
-      text) · XML, plain text, CSV and JSON as they are.
-      Anything else — Word, Excel, images, .eml, ZIP — comes back with
+      text) · XML, plain text, CSV and JSON as they are · Word, Excel and
+      PowerPoint (docx, xlsx, pptx) as plain text (kind docx/xlsx/pptx): Word
+      paragraphs as lines with table cells tab-separated; Excel sheet by
+      sheet as "## Blatt: <name>" with tab-separated cells, numbers raw and
+      dates as Excel serial numbers (no formatting); PowerPoint slide by
+      slide as "## Folie N".
+      Anything else — old binary Office files (.doc, .xls, .ppt),
+      password-protected Office files, images, .eml, ZIP — comes back with
       readable false plus its type and size. Do not guess its content.
       A SCANNED PDF has no text layer: you get an empty text and a note saying
       so. There is no OCR in this version.
@@ -462,8 +473,8 @@ tools:
       and clicks Send. Never report to a user that a mail "was sent"; report that
       a draft is ready for review, and pass on the returned web_link so they can
       open it.
-      This is a WRITE/MUTATING action: a human must confirm it before it is
-      performed — do not call it autonomously. It also needs the tool-exact
+      This is a WRITE action. It is annotated as such, so your client may ask
+      the user; JanuaPort itself never asks. It needs the tool-exact
       permission "microsoft-graph-mail:create_draft"; a connector-wide scope does
       NOT grant it.
       The draft gets exactly one recipient, a subject and a PLAIN-TEXT body. No
