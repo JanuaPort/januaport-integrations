@@ -234,6 +234,7 @@ konsultiert), bleibt aber nach dem Laden gesetzt.
 `ordner` zählt die direkten Unterverzeichnisse — sie werden NIE gelistet,
 jedes ist seine eigene Ablage (Epic-Regel 3). `art` kommt aus einer festen
 Endungstabelle (`pdf`, `xml`, `json`, `csv`, `text` für `txt`/`md`/`log`,
+heute `docx`, `xlsx`, `pptx`, `bild` für Bilder, `archiv` für `zip`,
 sonst `unbekannt`) — nie aus dem Dateiinhalt: `list_files` öffnet keine
 einzige Datei.
 
@@ -270,9 +271,51 @@ Textebene.
 Etikett. Es gibt **bewusst keine Tabellen-Sicht** (Zeilen/Spalten als
 Struktur, Spaltenfilter): Eine KI parst CSV-Text zuverlässig selbst, und eine
 Struktur-Sicht wird erst gebaut, wenn ein konkreter Use Case sie tatsächlich
-braucht (Root-`CLAUDE.md` §1.3 — nichts auf Vorrat). Dasselbe gilt für
-Office-Formate ohne Textebene: Die kommen mit `readable: false` und einer
-ehrlichen Notiz zurück, nie geraten.
+braucht ((Produkt-Doku, nicht öffentlich) — nichts auf Vorrat).
+
+**Office lesen: docx, xlsx, pptx (heute).** `read_file` liefert den
+Text von Word-, Excel- und PowerPoint-Dateien — `kind` ist dann `docx`,
+`xlsx` oder `pptx`, `mime` der OOXML-Typ. Erkannt wird am INHALT
+(`[Content_Types].xml` im Archiv), nie an der Endung: Eine docx unter dem
+Namen `.txt` wird als docx gelesen, ein reines ZIP unter `.docx` bleibt
+`unbekannt` („ZIP-Archiv, Inhalt wird nicht gelesen"). Die Form:
+
+- **Word:** Absätze als Zeilen, Tabellenzellen durch Tab, eine Tabellenzeile
+  je Zeile. Verfolgte Löschungen und Feldcodes stehen nicht im Text, das
+  Feldergebnis schon. Kopf-/Fußzeilen, Fußnoten und Kommentare sind nicht
+  dabei.
+- **Excel:** Blatt für Blatt in der Reihenfolge der Mappe, je Blatt ein Kopf
+  `## Blatt: <Name>` (ausgeblendete mit „(ausgeblendet)"), Zellen durch Tab
+  (Lücken zwischen Spalten aufgefüllt, Lücken zwischen Zeilen nicht).
+  **Zahlen stehen roh, Datumswerte erscheinen als Excel-Seriennummer**
+  (Tage seit 1900) — Zellformate werden nicht ausgewertet; die Notiz sagt
+  das jedes Mal. Formeln kommen nur als zwischengespeichertes Ergebnis,
+  Wahrheitswerte als WAHR/FALSCH, Fehler als ihr Text (`#DIV/0!`).
+- **PowerPoint:** Folie für Folie in der Reihenfolge, die der Nutzer sieht,
+  je Folie ein Kopf `## Folie N`, Absätze als Zeilen. Keine Sprechernotizen.
+- **Nicht gelesen** (`readable: false` mit fester Notiz): alte binäre
+  Office-Dateien (`doc`, `xls`, `ppt`), passwortgeschützte Office-Dateien
+  (beides ist technisch ein OLE-Container), Makro-Varianten und Vorlagen
+  (`docm`, `xlsm`, `dotx`, …) sowie beschädigte Archive.
+
+**Deckel, fest im Code (kein YAML-Hebel):** höchstens 10 000 Einträge im
+Archiv (gezählt, bevor das Archiv geöffnet wird), gezählte entpackte Bytes
+32 MiB je Teil und 64 MiB für das ganze Dokument, ein Header-Verhältnis
+über 1000:1 gilt als Zip-Bombe, XML-Verschachtelung 256, 1 MiB je
+XML-Element oder Textknoten, 50 Blätter, 10 000 Zeilen je Blatt, 256 Spalten
+je Zeile, 500 000 bzw. 16 MiB gemeinsame Zeichenketten; der Text ist wie
+immer auf 128 KiB gekürzt, und sobald er voll ist, wird nichts mehr
+entpackt. Office läuft über **denselben** Semaphor und dasselbe Zeitbudget
+wie PDF (zwei gleichzeitige Auswertungen, 20 s). Ein Deckel kürzt
+(`truncated: true` plus Notiz), er scheitert nicht.
+
+**Gelesen, nie ausgeführt.** Aus einer Office-Datei wird nur Text gewonnen:
+Makros, eingebettete OLE-/ActiveX-Objekte und DDE-Feldcodes werden nicht
+angefasst, Formeln nicht ausgewertet. Ehrliche Grenze in der Gegenrichtung
+(SEC-Auflage heute): **Formel-Injection** — eine CSV oder xlsx, die eine
+KI in die Ablage schreibt, kann Formeln tragen (`=WEBSERVICE`, `=HYPERLINK`,
+DDE), die Excel beim Öffnen ausführt; das wird nicht geprüft. Empfehlung an
+den Betreiber: DDE und externe Inhalte im Office-Trust-Center abschalten.
 
 ### Ausliefern: `get_file` (`type: ablage`, Story #731)
 
@@ -349,6 +392,29 @@ Antwort, und deshalb ist auf einer solchen Ablage der Scope die Grenze, die
 zählt. **Gibt es eine wirksame Pseudonymisierung, liefert das Werkzeug gar
 nicht** — s. o. und „Die Bytes und die Pseudonymisierung".
 
+**Der MIME-Typ kommt aus der festen Endungstabelle** ((Produkt-Doku, nicht öffentlich),
+`artTabelle`) — nicht aus `mime.TypeByExtension`, das im distroless-Container
+plattformabhängig wäre. Dieselbe Tabelle speist `art` in `list_files`:
+
+| Endungen | `art` | MIME |
+|---|---|---|
+| `pdf` | `pdf` | `application/pdf` |
+| `xml` | `xml` | `application/xml` |
+| `json` | `json` | `application/json` |
+| `csv` | `csv` | `text/csv` |
+| `txt`, `md`, `log` | `text` | `text/plain` |
+| `docx` | `docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+| `xlsx` | `xlsx` | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` |
+| `pptx` | `pptx` | `application/vnd.openxmlformats-officedocument.presentationml.presentation` |
+| `png`, `jpg`/`jpeg`, `gif`, `tif`/`tiff`, `webp` | `bild` | `image/png`, `image/jpeg`, `image/gif`, `image/tiff`, `image/webp` |
+| `zip` | `archiv` | `application/zip` |
+| alles andere | `unbekannt` | `application/octet-stream` |
+
+Der Betreiber-Bestand zählt als „lesbar" nur, was `read_file` als Text liefert
+(`textLesbar` in derselben Tabelle) — ein Bild oder ein Archiv hat
+eine Art, aber keinen Text; docx, xlsx und pptx zählen heute als
+lesbar.
+
 **Der Deckel ist `max_file_bytes`** — derselbe wie beim Lesen, und er greift
 **vor dem Öffnen** der Datei. Die Fehlermeldung nennt ihn zusammen mit einem
 Hinweis, der hier zählt: Die Antwort wächst durch die Base64-Kodierung noch
@@ -397,17 +463,118 @@ Werkzeug auch.
 Die Antwort trägt **nie den Inhalt und nie einen Pfad** — nur den gewählten
 Dateinamen und die Byte-Zahl, dazu der Text „Abgelegt als … (n Bytes)."
 
-**`inhalt` ist Text (UTF-8), kein Base64, kein Binär.** Der Anlass ist „die
-KI erzeugt ein Dokument oder eine Liste für die RPA" — Byte-Durchreichen
-bleibt der Weg von `save_attachment` (ein serverseitiger Anhang-Transfer,
-niemals der Modellkontext).
+**Zwei Wege, genau einer je Aufruf (heute):**
 
-**Die Endung ist eine Positivliste, nicht Vertrauen in den Namen:** erlaubt
-sind `txt`, `md`, `csv`, `json`, `xml` — case-insensitiv, genau einmal, am
-Ende. Eine fehlende, unbekannte oder doppelte Endung (`rechnung.pdf.exe`
-zählt nur `exe`) ist ein Fehler, der den gelieferten Namen zurücknennt (Wahl
-der KI, kein Leck). Bewusst keine PDF-Erzeugung — Inhalt kommt als Text aus
-dem Kontext der KI.
+- **`inhalt`** — Text (UTF-8), wie heute. Der Anlass ist „die KI erzeugt
+  ein Dokument oder eine Liste für die RPA".
+- **`inhalt_base64`** — Binärinhalt als Standard-Base64 (RFC 4648, mit
+  Padding, ohne Leerraum, ohne `data:`-Präfix, kein URL-Alphabet). Der
+  Anlass ist „die KI erzeugt eine kleine PDF oder XLSX selbst".
+
+```json
+// eingangsrechnungen_write_file
+{"file": "2026-09-16_liste.xlsx", "inhalt_base64": "UEsDBBQAAAAIA…"}
+```
+
+Beide oder keines ist ein Fehler, bevor irgendetwas passiert. Ungültiges
+Base64 ergibt die feste Meldung „inhalt_base64 ist kein gültiges
+Standard-Base64 (RFC 4648, mit Padding, ohne Zeilenumbrüche)" — nie ein Teil
+der Eingabe.
+
+**Die Größe ehrlich (E16).** `inhalt_base64` ist nur für **kleine Dateien,
+die die KI selbst erzeugt**: Jedes Byte läuft als Base64 durch die Ausgabe
+des Modells, rund 4/3 der Dateigröße. Die Transportgrenze liegt bei etwa
+**6 MiB Nutzlast** (der MCP-Body ist auf 8 MiB gedeckelt). Große Dateien legt
+der Mensch direkt in SharePoint oder auf den Share. Vor der Dekodierung prüft
+die Runtime die Länge gegen `max_file_bytes` (in Base64-Zeichen); der
+eigentliche Byte-Deckel bleibt der eine im Link-Schreiber (s. u.). Wie weit
+reale Clients kommen, wird nach dem Merge mit einem echten Client gemessen.
+
+**Sperrliste statt Positivliste (PO-Entscheid 29.09.).** Erlaubt ist
+alles außer aktiven und ausführbaren Typen — für beide Wege, EIN Wächter. Es
+zählt die **letzte** Endung, wie Windows sie auswertet (`rechnung.pdf.exe` ist
+`exe`), ohne Rücksicht auf Groß- und Kleinschreibung. Ein Name ohne Endung ist
+erlaubt. Die Meldung nennt die Klasse und den Namen, wie die KI ihn geschickt
+hat.
+
+| Klasse | Endungen | Grund |
+|---|---|---|
+| Windows-Programm oder Installer | exe, com, scr, msi, dll, cpl, pif, ocx, msp, mst, msc, xll, appx, appxbundle, msix, msixbundle, appinstaller, application, appref-ms, diagcab | Doppelklick führt Code aus oder installiert; `msc` und `xll` (Excel-Add-in = DLL) sind aktuelle Angriffswege |
+| | vsto, msu, pkg, mpkg | Office-Add-in, Windows-Update-Paket und macOS-Installer installieren Code (SEC B3) |
+| Skript | bat, cmd, ps1, psm1, vbs, vbe, js, jse, wsf, wsh, hta, reg, jar, sh, py, psd1, ps1xml, psc1, vb, wsc, sct, inf, jnlp, pyw, pyz, bash, zsh, command, desktop | Interpreter oder Shell führen sie aus; `inf` per Rechtsklick „Installieren"; `command`/`desktop` sind die macOS- und Linux-Pendants |
+| Verknüpfung oder Shell-Datei | lnk, url, scf, library-ms, searchconnector-ms, settingcontent-ms | Der Explorer wertet sie aus — Code-Ausführung oder NTLM-Leak schon beim Anzeigen des Ordners |
+| | rdp | Phishing mit RDP-Dateien verbindet Laufwerke und Zwischenablage zum Angreifer (SEC B3) |
+| | theme, themepack, deskthemepack | NTLM-Leak beim Anzeigen bzw. Anwenden, CVE-2024-21320 (SEC B3) |
+| Office-Datei mit Makros | xlsm, xltm, docm, dotm, pptm, potm, ppsm, xlam, ppam, sldm, xlsb | Makros; `xlsb` ist makrofähig ohne „m" im Namen |
+| Altes Office-, Access- oder Publisher-Format oder Excel-Abfrage | doc, dot, xls, xlt, xla, ppt, pot, pps, ppa | Makros ohne sichtbares Kennzeichen, Inhalt (CFB) nicht billig prüfbar (E5, PO-Bestätigung) |
+| | mdb, mde, accdb, accde, accdr, ade, adp, pub | Access mit VBA und AutoExec-Makros, Publisher mit OLE und VBA (SEC B3) |
+| | slk, iqy, dqy, rqy | SYLK (Excel-4-Makros, DDE) und Excel-Webabfragen, gängige Phishing-Träger (SEC B3) |
+| Aktives Web-Format | html, htm, xhtml, svg, shtml, xht, mht, mhtml, svgz | Skripte im Browser bzw. in der Vorschau |
+| | xbap | Browser-Anwendung (SEC B3) |
+| Einhängbarer Container | iso, img, vhd, vhdx, dmg | Beim Doppelklick eingehängt, der Inhalt verliert die Internet-Markierung |
+| Kompilierte Hilfe | chm | Führt Skripte aus |
+
+**Bewusst NICHT gesperrt** (PO: „sonst alles") — mit benanntem Restrisiko:
+`zip`, `7z`, `rar` (Inhalt ungeprüft, `7z`/`rar` geben die Internet-Markierung
+nicht in jeder Version weiter), `rtf` (OLE-Exploits), `one` (Einbettungen),
+`pdf`, `eml`, `msg`, Bilder, `docx`/`xlsx`/`pptx` (mit der Inhaltsprüfung
+unten), Text- und Datenformate. `php`, `pl`, `rb` haben unter Windows und
+macOS keinen Standard-Handler und bleiben draußen.
+
+**Namensregeln für Windows und SMB** (nur für neu abgelegte Dateien; lesbar
+bleibt jeder Bestand):
+
+- kein Leerraum und kein Punkt am Ende — Windows, SMB und SharePoint schneiden
+  sie ab, aus `rechnung.exe.` würde `rechnung.exe`;
+- keines der Zeichen `: * ? " < > |` — `x.pdf:y.exe` wäre ein Datenstrom;
+- kein Steuerzeichen, auch kein C1-Zeichen und kein unsichtbares
+  Formatzeichen (Richtungsumkehr U+202E, Nullbreite);
+- kein Gerätename: `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`,
+  auch mit Endung (`nul.txt`) und in jeder Schreibung — eine solche Datei kann
+  ein Windows-Nutzer weder öffnen noch löschen (SEC B7).
+
+**Die Endung ist eine Angabe, nie ein Freibrief — der Inhalt wird geprüft**,
+auf BEIDEN Wegen:
+
+- **Programmcode unter jeder Endung:** PE (`MZ` plus `PE\0\0` an `e_lfanew`,
+  mit Bereichsprüfung — eine CSV, die mit „MZ" beginnt, geht durch), ELF und
+  Mach-O (auch Fat-Binary; `CAFEBABE` erkennt auch Java-Klassen). Auch über
+  `inhalt`: Ein ELF lässt sich aus 7-Bit-Zeichen plus NUL bauen (SEC B2). Ein
+  Shebang (`#!`) wird nicht gesperrt — abgelegt wird mit 0600, SMB und
+  SharePoint kennen kein Ausführungsbit.
+- **CFB-Container unter jeder Endung außer `msg`** (Magic `D0 CF 11 E0 A1 B1
+  1A E1`, SEC-Nachtrag heute): Darin stecken die alten Office-Formate und
+  passwortgeschütztes OOXML — ein als `.xlsx` umbenanntes `.xls` käme sonst
+  an der Sperrliste vorbei. Passwortgeschützte Office-Dateien (CFB-Container)
+  legt der Mensch über SharePoint oder den Share ab, nicht die KI. `msg`
+  (Outlook-Nachrichten sind CFB) bleibt inhaltlich ungeprüft wie `zip`.
+- **OOXML ohne „m"** (`docx`, `xlsx`, `pptx`, `xltx`, `dotx`, `potx`, `ppsx`),
+  das als Zip erkannt wird: abgewiesen bei einem Eintrag `vbaProject.bin`,
+  einem VBA- oder `macroEnabled`-Inhaltstyp in `[Content_Types].xml` oder einer
+  Beziehung mit `TargetMode="External"` in irgendeinem `*.rels`-Teil, außer
+  Hyperlinks (SEC B1 — Remote-Template-Injection über `attachedTemplate`,
+  NTLM-Leak über externe OLE-Objekte). Die Zahl der Einträge wird vor dem
+  Öffnen aus dem Ende des Zentralverzeichnisses geprüft (höchstens 10 000,
+  (Produkt-Doku, nicht öffentlich)), jeder gelesene Teil über 256 KiB gedeckelt, alle
+  zusammen über 8 MiB. Was sich so nicht prüfen lässt (beschädigt, zu groß, zu
+  viele Einträge), wird **nicht** abgelegt.
+
+**Die ehrlichen Grenzen des Ablegens:**
+
+- **Keine Internet-Markierung.** Dateien, die über die Ablage auf SMB oder den
+  Share kommen, tragen kein Mark-of-the-Web. Office öffnet sie deshalb ohne
+  geschützte Ansicht, und „Makros aus dem Internet blockieren" greift nicht —
+  die Ablage ist für Office ein vertrauenswürdiger Ort. Deshalb ist die
+  Sperrliste hier schärfer als ein Mail-Filter.
+- **Formel-Injection wird nicht geprüft.** CSV und XLSX aus der KI können
+  Formeln tragen (`=WEBSERVICE`, `=HYPERLINK`, DDE). Betreiber-Empfehlung: DDE
+  und externe Inhalte im Office-Trust-Center abschalten.
+- **DDE-Feldcodes in docx und eingebettete OLE- oder ActiveX-Objekte**
+  (`embeddings/*.bin`) werden nicht geprüft — sie sind in echten Dokumenten
+  üblich.
+- **Pseudonyme in Binärinhalt werden nicht zurückgewandelt** (s. u.).
+- **Schreiben hat keinen Semaphor** wie das Lesen; die Größe hält der
+  8-MiB-Body-Deckel je Request, die Zip-Prüfung ihre eigenen Deckel.
 
 **Nie überschreiben, atomar, kein Zähler-Suffix** — dieselbe Zusage wie beim
 bisherigen `write_target`-Schreibpfad (s. u.): Ein zweiter Aufruf auf
@@ -422,6 +589,32 @@ dem Deckel scheitert VOR dem Verlinken, kein Temp-Rest bleibt liegen.
 arbeitet mit Pseudonymen, Mensch und RPA brauchen die Klartexte in der Datei
 — dieselbe Regel wie bei jedem REST-Write. Ein unbekanntes Pseudonym scheitert
 vor jedem Schreibzugriff.
+
+**`inhalt_base64` wird NIE zurückgewandelt** — nur `file`. Ein Pseudonym
+mitten in einer PDF bleibt ein Pseudonym; eine Byte-Ersetzung im Binärinhalt
+zerstörte die Datei. Deshalb gilt das Spiegelbild von `get_file`: **Auf einer
+pseudonymisierten Ablage wird kein Binärinhalt abgelegt** — geprüft vor der
+Rückwandlung und vor jedem Dateizugriff, fail-closed, wenn die Deklaration
+nicht lesbar ist. Die Meldung nennt den Ausweg: Text oder CSV über `inhalt`
+geht, und der Betreiber kann die Pseudonymisierung dieser Ablage abschalten.
+„Pseudonymisiert" heißt dasselbe wie bei `get_file` (über alle Werkzeuge der
+Ablage, Hauptschalter inklusive; ein Zugang mit Klartext-Recht gilt als nicht
+pseudonymisiert).
+
+**Audit:** `file` steht im Klartext, `inhalt` und `inhalt_base64` sind
+redigiert. Weder der Base64-Text noch die Bytes stehen je im Ereignis, im Log,
+in der Antwort oder in den Inhalten der Protokolltiefe (: der Upload steht
+dort nur als Typ, Größe und SHA-256).
+
+**Die Reihenfolge ist Zusage:** genau eines → (Binär) Pseudonym-Sperre →
+(Binär) Längenvorprüfung → Rückwandlung (Binär: nur `file`) → (Binär)
+Dekodierung → Ablegen: Pfad-Wächter → Sperrliste und Namensregeln →
+Byte-Deckel → Inhaltsprüfung (beide Wege) → atomarer Link → Antwort.
+**Heute** sitzen Namens- und Inhaltsprüfung im gemeinsamen Schreibweg
+(`Executor.WriteFile`), vor dem Öffnen des Ablage-Verzeichnisses. Damit gelten
+sie genauso für `save_attachment` (Mail-Anhänge von fremden Absendern, die in
+der Ablage keine Internet-Markierung tragen). Folge: Ein gesperrter Name mit
+ungültigem Base64 meldet zuerst den Base64-Fehler.
 
 ### Verschieben: `move_file` (`type: ablage`, Story #730)
 
@@ -439,6 +632,15 @@ bei jedem anderen Schreib-Werkzeug im Haus). Fehlt eines der beiden Rechte
 oder ist das Ziel unbekannt, kommt **dieselbe** Meldung zurück — kein
 Existenz-Leak, ob das Ziel überhaupt existiert oder die Quelldatei vorhanden
 ist.
+
+**Pseudonymisiert bleibt pseudonymisiert.** Ist die Quelle
+pseudonymisiert, das Ziel aber nicht, lehnt `move_file` ab — mit einer
+eigenen Meldung, die das so sagt (ohne Dateinamen), und im Audit als
+`denied`. Die Prüfung läuft **nach** der Ziel-Prüfung (wer sie erreicht,
+kennt Existenz und Schreibrecht des Ziels ohnehin — es entsteht kein Orakel)
+und **vor** jedem Zugriff auf die Quelldatei. Ist eine der beiden
+Deklarationen nicht lesbar, wird nichts verschoben (Konfigurationsfehler).
+Begründung und bewusste Grenze: „Die Bytes und die Pseudonymisierung" oben.
 
 **Token-Rezept:**
 
@@ -480,6 +682,23 @@ zum Zeitpunkt dieser Story **ungemessen** — derselbe Vorbehalt gilt bereits
 für `write_file`/`save_attachment` seit #717. Der Live-Beleg auf der
 Pilot-Freigabe ist Sache des Betreiber-Rollouts (BOX, #716), nicht dieser
 Spec.
+
+⚠️ **Betreiber-Regel: wem die Quelldatei gehört.** Ein
+Berechtigungsfehler beim Link-Versuch (`EPERM`/`EACCES`) nimmt heute
+denselben Ausweichweg wie `EXDEV` — der häufigste Fall in der Praxis, wenn
+die Quelldatei von AUSSEN in die Ablage kam (SMB, Scanner, RPA,
+SharePoint-Abgleich) und deshalb nicht dem Gateway-Prozess gehört, allen
+voran unter `fs.protected_hardlinks=1` (Standard auf modernen
+Distributionen: kein Nutzer darf einen Hardlink auf eine fremde Datei
+anlegen). JanuaPort ändert dafür **weder Eigentümer noch Rechte der
+Quelldatei** — das wäre ein stilles Reparieren fremder Dateien, nicht
+seine Aufgabe. Die Regel geht deshalb an den Betreiber: **Wer Dateien in
+eine Ablage legt, aus der JanuaPort verschieben soll, sorgt dafür, dass
+der Gateway-Prozess sie lesen UND schreiben darf — oder die Dateien
+gehören ihm gleich** (derselbe Prozess/dasselbe Konto legt sie an). Fehlt
+sogar das Leserecht, scheitert `move_file` mit einer ehrlichen Meldung
+(die Datei gehört möglicherweise einem anderen Nutzer), nie mit einem
+falschen Verdacht auf Speicherplatz oder Dateisystem.
 
 **Der Byte-Deckel des ZIELS gilt, auch im Kopierfall** — eine Datei, die im
 Ziel den dortigen `max_file_bytes` überschreiten würde, wird gar nicht erst
@@ -653,6 +872,48 @@ ignoriert (diese Art hat bewusst keine Hierarchie).
 **Das konfigurierte `dir` selbst darf** ein Symlink oder Bind-Mount sein — es ist
 Ihre Konfiguration, keine Agenten-Eingabe.
 
+### Das Ablage-Verzeichnis ist festgenagelt (heute)
+
+**Beim Laden merkt sich JanuaPort, WELCHES Verzeichnis `dir` ist** (Gerät und
+Inode — bei einem Symlink das Verzeichnis, auf das er beim Laden zeigt). Ist
+`dir` beim Laden noch nicht erreichbar (Volume noch nicht gemountet), geschieht
+das beim ersten erfolgreichen Zugriff. Jeder spätere Zugriff prüft zuerst, ob
+es noch dasselbe Verzeichnis ist. Wenn nicht, scheitert er mit einem
+Konfigurationsfehler:
+
+> Ablage-Verzeichnis /data/ablage/bank hat sich seit dem Laden geändert —
+> Integration neu laden
+
+Der Grund: Zur Laufzeit ist „Sie haben das Verzeichnis umkonfiguriert" nicht zu
+unterscheiden von „jemand mit Schreibrecht im **Eltern**-Verzeichnis hat es
+nach dem Start durch einen Verweis auf ein fremdes Verzeichnis ersetzt". Das
+zweite wäre ein Ausbruch aus der Ablage — deshalb gilt nur, was beim Laden
+galt. **Ein Neuladen der Integration** (Reload) übernimmt den neuen Stand.
+
+Das trifft Sie auch, wenn Sie das Ablage-Verzeichnis **löschen und unter
+demselben Pfad neu anlegen** oder wenn ein Netzlaufwerk (SMB/NFS) nach einem
+Neu-Einhängen eine andere Gerätenummer bekommt: In beiden Fällen ist es
+technisch ein anderes Verzeichnis — ein Reload behebt es. Auf einer
+SMB-Freigabe setzt das stabile Inode-Nummern voraus (Mount-Option `serverino`,
+der Standard, sobald der Server es unterstützt); mit `noserverino` kann die
+Prüfung fälschlich anschlagen.
+
+💡 **Für den Betrieb:** Am wenigsten angreifbar ist ein Ablage-Verzeichnis, das
+selbst der Mount-Punkt ist — von der Freigabe aus lässt es sich nicht ersetzen.
+Eine über die Verwaltung angelegte Ablage liegt dagegen als **Unterordner**
+unter einem Einstiegspunkt (`JNPT_ABLAGE_DIR/<einstiegspunkt>/<ordner>`); wer
+in der Freigabe schreiben darf, kann ihn umbenennen oder ersetzen. Genau
+dagegen wirkt die Festnagelung oben: JanuaPort arbeitet dann nicht im
+Ersatz, sondern meldet den Konfigurationsfehler.
+
+**Geprüft wird, was gelesen wird.** Jede Datei wird über das festgenagelte
+Verzeichnis geöffnet und **am geöffneten Datei-Handle** noch einmal geprüft:
+reguläre Datei und dieselbe, die kurz zuvor geprüft wurde. Wird sie in diesem
+Moment gegen einen Symlink getauscht, lehnt JanuaPort mit derselben Meldung ab
+wie bei einem Symlink, der schon vorher dalag. Beim Verschieben (`move_file`)
+gilt dasselbe für den Eintrag, der in der Zielablage entsteht: Ist es nicht die
+geprüfte Datei, wird er zurückgenommen, und die Quelle bleibt liegen.
+
 ### Die Bytes und die Pseudonymisierung (seit #731)
 
 🚨 **Eine pseudonymisierte Ablage liefert nie Bytes.** Das ist eine MECHANIK,
@@ -680,6 +941,25 @@ schaltet die Pseudonymisierung **dieser Ablage** ab — eine bewusste
 Betreiber-Entscheidung an einer Fläche, die sie protokolliert. Was es NICHT
 gibt, ist ein Weg, an einer pseudonymisierten Ablage vorbei an die Bytes zu
 kommen.
+
+**Auch nicht über einen Umweg (heute).** Eine Datei aus einer
+pseudonymisierten Quelle darf nur in eine **ebenfalls pseudonymisierte**
+Ablage gelangen — sonst holte `get_file`/`read_file` sie dort im Klartext
+ab. Das gilt für `move_file` (Quelle = die Ablage) und für `save_attachment`
+(Quelle = die Mail-Integration, s. `docs/connector-microsoft-graph-mail.md`).
+„Pseudonymisiert" heißt für beide Ablagen dasselbe wie oben (über alle
+Werkzeuge, Hauptschalter inklusive). Die Richtungen nicht pseudonymisiert →
+beliebig und pseudonymisiert → pseudonymisiert bleiben erlaubt. **Bewusste
+Grenze:** Die *Stärke* zweier Deklarationen wird nicht verglichen — eine
+Quelle, die Namen und IBANs ersetzt, darf in ein Ziel verschieben, das nur
+IBANs ersetzt. Wer das braucht, gleicht die Deklarationen der beiden Ablagen
+an.
+
+**Und in der Gegenrichtung (heute):** Auf eine pseudonymisierte
+Ablage legt `write_file` keinen Binärinhalt (`inhalt_base64`) ab — Pseudonyme
+darin würden nicht zurückgewandelt, Klartext darin nie pseudonymisiert. Der
+Textweg (`inhalt`) bleibt erlaubt. Dieselbe Frage, dieselben zwei Signale,
+dieselbe Stelle vor Rückwandlung und IO wie bei `get_file` (s. „Ablegen").
 
 **Was auf einer Ablage OHNE Pseudonymisierung gilt:**
 
@@ -740,8 +1020,9 @@ Berechtigungs-Achse**:
 - **Audit.** Jeder Aufruf erzeugt genau ein Protokoll-Ereignis mit Zeitpunkt,
   Zugang, Integration, Werkzeug, Status, Dauer — und den Argumenten im Klartext,
   also **inklusive des gelesenen Dateinamens**. Es enthält **nie** einen
-  Dateiinhalt. Der Debug-Mitschnitt der Antworten (`JNPT_AUDIT_RESPONSE_TTL`)
-  zeichnet, wenn eingeschaltet, die **pseudonymisierte** Fassung auf.
+  Dateiinhalt. Auf der Protokolltiefe „Antworten" steht die
+  **pseudonymisierte** Fassung der Antwort im Inhalt — `get_file`-Bytes nur als
+  Typ, Größe und SHA-256.
 - **`report_problem`** kennt die Integration: Ein Agent kann ein Problem mit
   dieser Ablage melden.
 - Das **`catalog`**-Werkzeug nennt sie mit Typ „File directory" und ihrem Zweck
@@ -769,7 +1050,7 @@ Drill-Down zeigt:
 
 ⚠️ **Die GUI zeigt Struktur und Status, nie Bankdaten** — und sie kann es auch
 nicht anders: Die zugrunde liegende Antwort (`GET /api/admin/files`, s.
-`docs/admin-api.md` (Produkt-Doku, nicht öffentlich)) trägt **keine Datei-Liste**. Welche Dateien
+(Produkt-Doku, nicht öffentlich)) trägt **keine Datei-Liste**. Welche Dateien
 in der Ablage liegen, beantwortet ausschließlich `list_statements`, und das
 hängt an einem Scope.
 
@@ -796,12 +1077,15 @@ Admin-CRUD-Wegs.)
   nutzbaren Einstiegspunkt steht der `hinweis` der API wörtlich da, Speichern
   bleibt gesperrt. Erfolg wirkt sofort, ohne Neustart.
 - **Ändern:** In der Detailseite einer über diesen Weg angelegten Ablage
-  (Abschnitt „Ablage & Bestand") lässt sich Zweck und die zwei Deckel über
-  einen Bearbeiten-Aufklapper ändern (`PUT /api/admin/files/{name}`).
-  Einstiegspunkt und Ordner bleiben fest.
-- **Löschen:** Im Aktionen-Abschnitt derselben Detailseite löscht ein Knopf
-  mit Rückfrage die Integration (`DELETE /api/admin/files/{name}`) — die
-  Rückfrage nennt die Folge wörtlich: „Löschen entfernt nur die Integration —
+  (Abschnitt „Ablage & Bestand") lassen sich Zweck, heute Einstiegspunkt
+  und Ordner und die zwei Deckel über einen Bearbeiten-Aufklapper ändern
+  (`PUT /api/admin/files/{name}`). Der Ordner muss schon vorhanden sein; am
+  Feld steht sichtbar: „Die Rechte bleiben am Namen der Ablage und gelten ab
+  sofort für den neuen Ordner — Dateien werden nicht verschoben." Der
+  Einstiegspunkt ist eine Auswahl aus den bekannten Einstiegspunkten.
+- **Löschen:** Im Gefahrenbereich ganz unten derselben Detailseite
+  (vorher im Aktionen-Abschnitt) löscht ein Knopf mit Rückfrage
+  die Integration (`DELETE /api/admin/files/{name}`) — die Rückfrage nennt die Folge wörtlich: „Löschen entfernt nur die Integration —
   die Dateien im Ordner bleiben unberührt."
 - **Die Herkunft entscheidet:** Nur eine über die Oberfläche/API/den
   Admin-MCP angelegte Ablage (Herkunft „katalog") ist über die Oberfläche
@@ -871,7 +1155,7 @@ noch (unmittelbar) die Ablage eines einzelnen `camt053_v08`/`write_target`
 selbst — es ist die Wurzel, unter der über die Admin-Oberfläche/-API/-MCP
 angelegte Ablagen ihre Ordner bekommen. Für die Box-Auslieferung: Der
 Compose-Mount zieht `JNPT_ABLAGE_HOST` unverändert auf `/ablage`
-(`docs/box-runbook.md`).
+(Produkt-Doku, nicht öffentlich).
 
 **⚠️ Die Ablage sichern Sie selbst.** `jnpt backup` sichert die Datenbank und
 den Konfigurationsstand — bei dieser Integrationsart also die **Pfade**
@@ -880,13 +1164,13 @@ Das ist keine Lücke, sondern die Kehrseite der tragenden Aussage: Das
 Verzeichnis IST die Quelle der Wahrheit, es gibt keine Kopie in JanuaPort.
 Nehmen Sie die Ablage deshalb in Ihr Dateisystem-Backup bzw. Ihren
 Volume-Snapshot auf — genauso wie das Spec-Verzeichnis.
-Einordnung: `docs/disaster-recovery.md` §1.
+Einordnung: (Produkt-Doku, nicht öffentlich) §1.
 
 ## Datenschutz (Leitplanken #219)
 
 Ein Kontoauszug enthält **Daten Dritter** — Namen und Kontoverbindungen von
 Kunden, Lieferanten, teils natürlichen Personen. Die vier Leitplanken aus
-`docs/datenschutz-leitplanken.md`, angewandt:
+(Produkt-Doku, nicht öffentlich), angewandt:
 
 1. **System statt Person.** Gegenstand ist ein Konto des Betreibers und seine
    Buchungen. JanuaPort erzeugt **kein einziges eigenes personenbezogenes
@@ -921,7 +1205,7 @@ ALIAS von `type: ablage`.** Alles, was dieser Abschnitt bis dahin beschrieb
 (ein eigener Typ, strukturell ohne Werkzeuge, ausschließlich prozessintern
 über `save_attachment` beschreibbar), war der Stand vor #729. Neue Specs
 schreiben `type: ablage` — `write_target` bleibt als Eingabe gültig, damit
-bestehende YAMLs (Pilotanwender, #716) unverändert weiterladen:
+bestehende YAMLs (bestehende Installationen) unverändert weiterladen:
 
 ```yaml
 name: eingang-rechnungen
@@ -999,7 +1283,7 @@ zweite Validierung. Details im nächsten Abschnitt.
 ```yaml
 # So sieht die von JanuaPort erzeugte Spec aus — Sie schreiben sie normalerweise nicht selbst:
 name: eingangsrechnungen-pilot
-description: "Eingangsrechnungen des Piloten."          # der "Zweck", den der Admin eingegeben hat
+description: "Eingangsrechnungen der Beispielablage." # der "Zweck", den der Admin eingegeben hat
 type: ablage
 dir: /ablage/kunde-a/eingangsrechnungen                  # aus Einstiegspunkt + Ordner zusammengesetzt
 ```
@@ -1016,7 +1300,7 @@ Einstiegspunkte. `GET /api/admin/ablage/einstiegspunkte` bzw. das
 Admin-MCP-Werkzeug `admin_list_einstiegspunkte` zeigt sie mit ihrem Zustand
 („erreichbar" oder „leer"); ist unter `JNPT_ABLAGE_DIR` noch gar nichts
 gemountet, ist das kein Fehler, sondern eine ehrliche Auskunft mit Hinweis
-auf den nötigen Mount (s. `docs/box-runbook.md`).
+auf den nötigen Mount (s. (Produkt-Doku, nicht öffentlich)).
 
 Beim Anlegen wählt der Admin einen bekannten Einstiegspunkt und einen
 **Ordnernamen** darunter — JanuaPort setzt `dir` daraus zusammen
@@ -1029,6 +1313,18 @@ führender Punkt (schließt `.` und `..` mit ein), keine Steuerzeichen, höchste
 und Schlüssel liegen — für einen Ordnernamen strukturell unerreichbar, nicht
 nur per Konvention verboten.
 
+Heute gilt dazu: **Leerzeichen innen, Großbuchstaben und Umlaute sind
+erlaubt** („Rechnungen Eingang" wie in SharePoint). Nicht erlaubt sind die
+Zeichen `: * ? " < > |` (SMB, SharePoint und Windows kennen sie nicht), ein
+Leerzeichen am Anfang oder Ende, ein Punkt am Ende sowie unsichtbare Zeichen
+(C1-Steuerzeichen, Bidi-Steuerung, Nullbreite). Ein vorhandener Ordner wird
+nur übernommen, wenn der Name genau gleich ist, auch in Groß- und
+Kleinschreibung; ein in SharePoint angelegter Ordner ist erst nach dem
+nächsten Abgleich auf der Box vorhanden. Unterordner (`a/b`) bleiben
+ausgeschlossen. Die Meldung nennt die verletzte Regel, nie den eingegebenen
+Namen. Geprüft wird an genau einer Stelle (der Domäne), deshalb antworten
+Admin-API, Admin-MCP und `ablage_create` gleich.
+
 ### Der Bauer legt selbst an: `ablage_create`/`ablage_list_einstiegspunkte` (Baustein 2, Story #726)
 
 Auf `/mcp` stehen dem Bauer zwei Werkzeuge zur Verfügung, sobald der Admin ihm
@@ -1036,14 +1332,14 @@ den Anlage-Scope gegeben hat (`ablage:ablage_create` bzw. `ablage`/
 `ablage:ablage_list_einstiegspunkte` für die Lese-Seite — deny-by-default,
 kein Zugang sieht diese Werkzeuge ohne den Scope):
 
-- **`ablage_list_einstiegspunkte()`** — dieselbe Auskunft wie
+- **`ablage_list_einstiegspunkte`** — dieselbe Auskunft wie
   `GET /api/admin/ablage/einstiegspunkte`/`admin_list_einstiegspunkte`: Name
   und Zustand (`erreichbar`/`leer`) jedes bekannten Einstiegspunkts, nie ein
   Dateiname.
 - **`ablage_create(name, zweck, einstiegspunkt, ordner)`** — legt eine neue
   Ablage genau wie der Admin-Weg an: `dir` wird SERVERSEITIG aus
   `JNPT_ABLAGE_DIR`/`einstiegspunkt`/`ordner` abgeleitet, nie vom Bauer
-  geliefert; dieselben Format-Regeln (Ordnername = strenge Dateiname-Regeln,
+  geliefert; dieselben Format-Regeln (Ordnername wie oben, Leerzeichen innen erlaubt,
   Zweck ohne Adresse); dieselbe Kollisionsprüfung über beide Quellen. Die
   Fehlermeldungen sind **wortgleich** zu Admin-REST-API und Admin-MCP — alle
   drei Eingänge rufen dieselbe Funktion.
@@ -1083,7 +1379,7 @@ Die Bausteine 4–7 aus Epic #725 sind da: **Lesen** (#728), **Ablegen**
 (#729), **Verschieben** (#730) und **Ausliefern** (#731).
 `list_files`/`read_file`/`get_file`/`write_file`/`move_file` sind damit die
 FÜNF Agenten-Werkzeuge einer Ablage — jedes deny-by-default, jedes einzeln
-vergebbar. Anlegen, Zweck/Deckel ändern und löschen bleibt die
+vergebbar. Anlegen, Zweck/Deckel/Ordner ändern und löschen bleibt die
 **Verwaltungs**-Fläche für Admins (Admin-API/-MCP/-GUI).
 
 Nicht dabei und auch nicht geplant: eine Ordner-Hierarchie, ein Upload über
@@ -1093,9 +1389,13 @@ stehen unter „Grenzen von Version 1" weiter unten.
 ### Ändern und Löschen
 
 `admin_update_ablage`/`PUT /api/admin/files/{name}` ändern **Zweck und/oder
-die drei Deckel** einer bestehenden Ablage — Einstiegspunkt und Ordner stehen
-mit der Anlage fest und sind nicht nachträglich änderbar (dafür löschen Sie
-die Ablage und legen sie neu an).
+die drei Deckel** einer bestehenden Ablage — und heute auf Wunsch auch
+**Einstiegspunkt und Ordner**, etwa wenn ein Ordner auf der Freigabe umbenannt
+wurde. Es gilt dieselbe Prüfung wie bei der Anlage; anders als dort muss der
+Ordner schon vorhanden sein. Nur der Zeiger wechselt, keine Datei wird
+verschoben. Die Rechte hängen am Namen der Ablage und gelten sofort für den
+neuen Ordner; Deckel und Pseudonymisierung bleiben. In der Oberfläche steht
+Einstiegspunkt und Ordner im Bearbeiten-Formular der Ablage.
 
 `admin_delete_ablage`/`DELETE /api/admin/files/{name}` löscht **nur die
 Integration** — bereits abgelegte Dateien im Ordner bleiben unberührt. Das
@@ -1119,14 +1419,17 @@ Bewusst nicht dabei — jeweils mit Grund, nicht aus Zeitmangel:
 - **Kein Upload über GUI oder API.** Das gilt unverändert seit #717 — es gibt
   keinen Bedienweg, über den ein Mensch in der Admin-Oberfläche oder per
   REST-Aufruf eine Datei ablegt. Das Ablegen ist ausschließlich Sache eines
-  MCP-Werkzeugs (`write_file`, KI-verfasster Text) oder eines serverseitigen
+  MCP-Werkzeugs (`write_file`, KI-verfasster Text oder heute kleine
+  KI-erzeugte Binärdateien) oder eines serverseitigen
   Byte-Transfers (`save_attachment`) — nie ein Formular.
 - **Kein Rohdatei-Durchreichen — für den LESE-Typ `camt053_v08`.** Er hat
   kein Werkzeug, das Bytes liefert; das Feature IST die typisierte Sicht —
   ein Byte-Kanal umginge Normalisierung, Pseudonymisierung und
   Fremdtext-Härtung in einem Schritt. `write_file` (`type: ablage`) nimmt
-  umgekehrt Text zum Ablegen entgegen, nie Binär; `save_attachment` reicht
-  Rohbytes serverseitig durch, nie durch den Modellkontext.
+  umgekehrt Text und heute auch kleinen Binärinhalt (`inhalt_base64`,
+  nie auf einer pseudonymisierten Ablage) zum Ablegen entgegen;
+  `save_attachment` reicht Rohbytes serverseitig durch, nie durch den
+  Modellkontext.
   ⚠️ **Für `type: ablage` gilt der Satz seit #731 nicht mehr:** `get_file`
   liefert die Datei im Ganzen. Das ist kein Aufweichen des Arguments oben,
   sondern seine Kehrseite — bei einer Ablage gibt es keine typisierte Sicht,
@@ -1161,7 +1464,7 @@ Bewusst nicht dabei — jeweils mit Grund, nicht aus Zeitmangel:
   Scopes gäbe es sonst nur hier, und zwei Modelle sind eines zu viel.
 - **Keine Retention-Automatik** (s. oben).
 - **Kein Hot-Reload der YAML-Specs**, keine Persistenz in der Datenbank für
-  `camt053_v08` — Start-Load wie bei Upstream und Datenbank; Neue DATEIEN in
+  `camt053_v08` — Start-Load bei diesem Typ; Neue DATEIEN in
   einer bestehenden Ablage wirken trotzdem sofort. ⚠️ **Seit #723 gilt das für
   `type: ablage` (inklusive Alias-geladener `write_target`-Specs) NICHT mehr
   uneingeschränkt:** Eine über die Admin-Oberfläche/-API/-MCP angelegte Ablage
