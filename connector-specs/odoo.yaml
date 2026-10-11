@@ -1,0 +1,685 @@
+# Odoo 19 über die External JSON-2 API — Kontakte, CRM-Pipeline, Projekte,
+# Aufgaben, Stundenzettel, Verträge und interne Notizen (Chatter) lesen;
+# Stunden buchen, Aufgabe anlegen, Lead-Stufe setzen und interne Notiz
+# an einer Aufgabe schreiben.
+#
+# API: POST /json/2/<model>/<method>, JSON-Body mit den Methoden-Parametern
+# Doku: External JSON-2 API (Envelope, Header, Fehlerobjekt, API-Schlüssel,
+# Datenbank-Header, Transaktion)
+# https://www.odoo.com/documentation/19.0/developer/reference/external_api.html
+# (Quelltext: github.com/odoo/documentation, Zweig 19.0,
+# content/developer/reference/external_api.rst — geprüft 28.09.2026)
+# ORM-Methoden create / write / fields_get
+# https://www.odoo.com/documentation/19.0/developer/reference/backend/orm.html
+# search_read steht NICHT in der gerenderten ORM-Referenz; Signatur
+# search_read(domain, fields, offset, limit, order) und der Dekorator
+# @api.readonly stehen im Quelltext github.com/odoo/odoo, Zweig 19.0,
+# odoo/orm/models.py. create(vals_list) ist @api.model_create_multi,
+# write(vals) läuft auf `ids`. res.users.context_get ist @api.model
+# (odoo/addons/base/models/res_users.py).
+# Anleitung: (Produkt-Doku, nicht öffentlich) (Bot-Nutzer, Rechtegruppe, API-Schlüssel mit
+# Ablauf, Credential in den Vault, Docker-Netz)
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE. Zwei Werte sind instanzspezifisch und stehen
+# hier als Platzhalter aus dem Beispiel der Odoo-Doku: der Host in `base_url`
+# (`mycompany.example.com`) und der Datenbankname im Header `X-Odoo-Database`
+# (`instance.database`, example: mycompany). Vor dem Einsatz base_url und
+# instance[].value setzen; die Headermarke bleibt. Der API-SCHLÜSSEL steht NIE
+# hier, sondern nur im Vault unter dem Namen "odoo".
+#
+# ⚠️ `jnpt.contract` (search_contracts) ist ein EIGENES Modell unserer Instanz
+# (Modul jnpt_backoffice), kein Odoo-Standard. Auf einer Instanz ohne
+# dieses Modul antwortet das Werkzeug mit einem Fehler — dort das Werkzeug per
+# Tool-Zuschnitt der Integration weglassen.
+#
+# ENVELOPE-ABGLEICH gegen die JSON-2-Doku:
+# * `Authorization: bearer <API-Schlüssel>` — Doku-Pflicht; die Runtime setzt
+# ihn aus `auth.template`. Kleingeschriebenes `bearer` wie in der Doku.
+# * `Content-Type: application/json` — kommt aus `encoding: json`.
+# * `X-Odoo-Database` — laut Doku optional, Pflicht nur, wenn ein Server
+# mehrere Datenbanken hält und `dbfilter` nicht über den Host entscheidet.
+# Wir setzen ihn immer (statischer Header) — schadet nie.
+# * `Accept: application/json` setzt die Runtime ohnehin; hier ausdrücklich,
+# weil der Schnitt ihn als Envelope-Zusage führt.
+# * `Host`/`User-Agent` setzt Go.
+#
+# FORMAT-REGELN DES SCHNITTS (lesender POST):
+# * Jeder Aufruf ist POST mit KONSTANTEM Pfad — Modell und Methode sind nie
+# ein Parameter (S1a). Lesen ist `read_via_post: true`, jede Zeile ist in
+# TestLesendePostsSindBelegt mit Pfad und Doku belegt.
+# * Jedes search_read nennt seine Feldliste KONSTANT. Ohne `fields` antwortet
+# Odoo mit 403 (gesperrte Felder wie message_ids, Live-Befund 28.09.2026) —
+# und ein Feld-Parameter ließe den Agenten beliebige Felder ziehen.
+# * Jedes search_read hat ein FESTES `limit: 50`; geblättert wird über
+# `offset`. Der Agent kann den Deckel nicht anheben.
+# * Filter sind UND-Tripel mit festem Feld und festem Operator; der Platzhalter
+# steht nur im Wert. Fehlt ein optionaler Filter, entfällt sein Tripel GANZ
+# (T1). Keine freie Domain, keine Präfix-Operatoren (| & !) — eine
+# OR-Domäne mit fehlendem Zweig weist Odoo mit ValueError ab.
+# * Filter und Werte laufen nur über IDs, NIE über Stufen- oder
+# Kategorie-NAMEN: Namen sind übersetzbar und ändern sich, IDs bleiben.
+#
+# SCHREIBEN: Jedes Schreibwerkzeug bildet GENAU EINE ORM-Methode ab. JSON-2
+# kennt keine Transaktionsklammer über mehrere Aufrufe; zusammengesetztes
+# Lesen-dann-Schreiben gibt es hier deshalb nicht. Kein `unlink`, kein
+# `action_*`. Partner und Leads ANLEGEN oder
+# ÄNDERN ist nicht in v1 (DSGVO-/UWG-Pflichtfelder = eigener
+# Nachschnitt). `set_lead_stage` schreibt nur `stage_id` — der Bot darf an
+# crm.lead nichts anderes schreiben (403).
+#
+# CHATTER (SEC-Regeln B1–B5): Notizen lesen an Aufgabe und Partner,
+# eine interne Notiz an einer Aufgabe schreiben — sonst nichts.
+# * Lesen (`list_task_notes`, `list_partner_notes`) ist `mail.message/search_read`
+# mit einer POSITIVEN, KONSTANTEN Domain aus vier UND-Tripeln: das Modell
+# (fest je Werkzeug, nie ein Parameter), `res_id` aus einem PFLICHT-Parameter
+# (sonst fiele das Tripel weg und das Werkzeug läse den Chatter ALLER
+# Datensätze), `message_type = comment` und `subtype_id.internal = true`. Nur
+# interne Notizen kommen durch — keine eingehenden Mails, kein „Nachricht
+# senden", keine Portal-Antworten von Kunden, keine protokollierten
+# Änderungen (Tracking). Keine Negativliste: Kundeneingänge sind nicht nur
+# `email`.
+# * Die Feldliste ist `id, date, body` — ohne Autor (die Aktivitätsspur je
+# Mitarbeiter, Leitplanke 1), ohne Empfänger, Anhänge und Tracking. `limit: 20`
+# (jeder Eintrag trägt bis zu 2000 Zeichen), neueste zuerst.
+# * `body` ist Odoo-HTML und wird in der Projektion auf 2000 Zeichen gekürzt
+# (`body[:2000]`, runenweise; ein leeres Feld kommt als null).
+# * Schreiben (`add_task_note`) ist `project.task/message_post` mit GENAU den
+# Schlüsseln `ids`, `body`, `message_type: comment`, `subtype_xmlid:
+# mail.mt_note`. Kein `partner_ids` (Benachrichtigung und Mail), kein
+# `author_id` (Autor ist der Bot), keine Anhänge, kein Betreff. Der Text steht
+# in `redact_params`. Eine Notiz an einem Partner oder Lead gibt es nicht.
+# * ⚠️ EIGENE INTEGRATION MIT EINEM INTERNEN Odoo-Nutzer (SEC-Entscheid B5):
+# Odoo zeigt interne Notizen nur internen Nutzern; einem share-Nutzer wie dem
+# Bot der übrigen Werkzeuge verweigert es `mail.message` (403) und blendet
+# interne Notizen im Quelltext aus. Deshalb eine ZWEITE Integration aus
+# dieser Vorlage (z. B. `odoo-chatter`, eigenes Credential `odoo-chatter`),
+# deren Token NUR die drei Chatter-Werkzeuge bekommt, mit einem eigenen
+# internen Bot mit minimalen Gruppen. Die Integration mit dem share-Bot
+# vergibt die drei Werkzeuge nicht. Gruppen, Reichweite des Schlüssels und
+# Kosten: (Produkt-Doku, nicht öffentlich) §3 („Chatter-Bot").
+#
+# FEHLER: Odoos Fehlerobjekt trägt im Feld `debug` einen vollständigen
+# Python-Traceback samt Server-Pfaden. Er erreicht den Agenten nicht — die
+# Runtime reicht im Werkzeug-Pfad nur Status und eine feste Erklärung weiter
+# (Produkt-Doku, nicht öffentlich). Deshalb nennen die Werkzeugbeschreibungen die
+# Pflichtregeln VORAB (employee_id, Stufen-IDs, nur stage_id).
+#
+# RATE LIMITS: Die JSON-2-Doku nennt keine. `min_interval: 500ms` ist eine
+# konservative Selbstbremse (~2 Aufrufe/s) für eine selbst gehostete Instanz,
+# keine Zusage.
+#
+# PRIVACY: bewusst KEIN `privacy:`-Block in der Vorlage. Kontakte, Stundentexte
+# und Mitarbeiternamen sind personenbezogen; welche Felder pseudonymisiert
+# gehören, entscheidet der Betreiber. Vorlage zum Ergänzen am Werkzeug
+# (Format: docs/connector-spec.md, Abschnitt Privacy):
+#
+# privacy:
+# read:
+# - {field: email, label: email}
+# - {field: phone, label: telefon}
+#
+# Für die Notizen (list_task_notes, list_partner_notes) ein `scan` auf den
+# Freitext. Ehrliche Grenze: `scan` findet E-Mail, Telefon und IBAN,
+# aber keine Namen — und Notizen sind Freitext über Personen.
+#
+# privacy:
+# scan:
+# - field: body
+# patterns: [email, telefon, iban]
+#
+# Many2one-Felder kommen als `[id, "Name"]` — ein `read`-Feld ersetzt den
+# ganzen Wert; das vorher gegen die eigene Instanz prüfen.
+
+name: odoo
+# Fassung dieser Vorlage — siehe demo-erp.yaml für die Bedeutung.
+# 2.0.0: zwei neue optionale Parameter (create_task.description,
+# search_partners.parent_id). Ein neuer Parameter ist für den Flächen-Wächter
+# `major` (Flächen-Wächter: neuer Parameter — das Schema setzt additionalProperties:
+# false, derselbe Aufruf wäre vorher abgewiesen worden). Mit derselben Fassung
+# tragen die drei Schreibwerkzeuge den Kernsatz heute (nur Beschreibung).
+# 3.0.0: drei neue Werkzeuge (Chatter) — DimToolAdded, `major`;
+# das Schreibwerkzeug add_task_note trägt den Kernsatz heute.
+version: "3.1.0"
+description: >
+  Odoo 19 via the JSON-2 API: search contacts, CRM leads and stages, projects,
+  tasks, timesheet lines, contracts and employees; read the internal notes of a
+  task or contact (needs a separate integration with an internal Odoo user);
+  log hours, create a task, add an internal note to a task and move a lead to
+  another stage. Every search returns at most 50 records per
+  call and pages with offset.
+# PLATZHALTER — durch die eigene Odoo-Adresse ersetzen (https://…; im selben
+# Docker-Netz auch http://<dienstname>:8069, siehe Anleitung).
+base_url: https://mycompany.example.com
+
+instance:
+  - name: database
+    label: Datenbankname
+    kind: text
+    example: mycompany
+
+auth:
+  header: Authorization
+  template: "bearer {{credential}}"
+  # Vault-Name des API-Schlüssels des Bot-Nutzers (jnpt credential set --name odoo).
+  credential: odoo
+
+headers:
+  # Anlagenwert: instance.database.value setzen, die Marke bleibt.
+  X-Odoo-Database: "{{instance.database}}"
+  Accept: application/json
+
+timeout: 30s
+min_interval: 500ms
+
+# Die Aufgabenbeschreibung und der Text einer Chatter-Notiz sind freier Text,
+# oft über Personen (Gesprächsnotiz). Im Audit-Log erscheinen sie deshalb nur als
+# [REDACTED]. Weitere Parameter zu redigieren ist eine eigene Entscheidung.
+redact_params: [description, body]
+
+tools:
+  - name: check
+    description: >
+      Health check: returns the language, time zone and user id of the Odoo
+      bot user this integration runs as. Changes nothing. Use it first when
+      calls fail: HTTP 401 means the API key is wrong or expired (keys expire
+      after at most three months), HTTP 403 means the bot user lacks a right.
+    # Probe für `jnpt connector check` — parameterlos. Der Body ist Pflicht
+    # (body_json darf nicht leer sein); context.lang ist der kleinste gültige
+    # Inhalt und ändert nichts.
+    check: true
+    request:
+      method: POST
+      path: /json/2/res.users/context_get
+      encoding: json
+      read_via_post: true
+      body_json:
+        context:
+          lang: de_DE
+
+  - name: search_partners
+    description: >
+      Searches contacts (companies and persons, model res.partner). Returns per
+      contact: id, name, is_company, parent_id (the company of a person, as
+      [id, "Name"] or false), email, phone, city and category_id (tag ids).
+      All filters are optional and combined with AND. To find the contact
+      persons of a company, pass the company's id as parent_id. At most 50
+      contacts per call; if you get 50, call again with offset 50, 100, … to
+      see more. Use the id as partner_id in the other tools. Read-only.
+    params:
+      - name: q
+        description: Optional. Part of the name, case-insensitive.
+        type: string
+      - name: is_company
+        description: Optional. true = only companies, false = only persons.
+        type: boolean
+      - name: parent_id
+        description: Optional. Company id from search_partners — returns the persons (contacts) of that company.
+        type: integer
+      - name: offset
+        description: Optional. Number of records to skip (paging, steps of 50).
+        type: integer
+    request:
+      method: POST
+      path: /json/2/res.partner/search_read
+      encoding: json
+      read_via_post: true
+      body_json:
+        domain:
+          - ["name", "ilike", "{q}"]
+          - ["is_company", "=", "{is_company}"]
+          - ["parent_id", "=", "{parent_id}"]
+        fields: ["id", "name", "is_company", "parent_id", "email", "phone", "city", "category_id"]
+        limit: 50
+        offset: "{offset}"
+
+  - name: search_leads
+    description: >
+      Searches CRM leads and opportunities (model crm.lead). Returns per lead:
+      id, name, partner_id, stage_id, expected_revenue, probability, user_id
+      (salesperson), date_deadline (expected closing) and won_status. Many2one
+      fields come as [id, "Name"]. Filter by stage with the numeric stage id
+      from list_stages — never by stage name. All filters are optional and
+      combined with AND. At most 50 leads per call; page with offset.
+      Read-only.
+    params:
+      - name: q
+        description: Optional. Part of the lead name, case-insensitive.
+        type: string
+      - name: stage_id
+        description: Optional. Numeric stage id from list_stages.
+        type: integer
+      - name: partner_id
+        description: Optional. Contact id from search_partners.
+        type: integer
+      - name: offset
+        description: Optional. Number of records to skip (paging, steps of 50).
+        type: integer
+    request:
+      method: POST
+      path: /json/2/crm.lead/search_read
+      encoding: json
+      read_via_post: true
+      body_json:
+        domain:
+          - ["name", "ilike", "{q}"]
+          - ["stage_id", "=", "{stage_id}"]
+          - ["partner_id", "=", "{partner_id}"]
+        fields: ["id", "name", "partner_id", "stage_id", "expected_revenue", "probability", "user_id", "date_deadline", "won_status"]
+        limit: 50
+        offset: "{offset}"
+
+  - name: list_stages
+    description: >
+      Lists the CRM pipeline stages (model crm.stage): id, name, sequence
+      (order in the pipeline) and is_won (true for the stage that means "won").
+      Call it before search_leads or set_lead_stage to get the numeric stage
+      ids — always work with the id, names can be translated or renamed.
+      Read-only.
+    params:
+      - name: offset
+        description: Optional. Number of records to skip (paging, steps of 50).
+        type: integer
+    request:
+      method: POST
+      path: /json/2/crm.stage/search_read
+      encoding: json
+      read_via_post: true
+      body_json:
+        fields: ["id", "name", "sequence", "is_won"]
+        limit: 50
+        offset: "{offset}"
+
+  - name: search_projects
+    description: >
+      Searches projects (model project.project). Returns per project: id,
+      name, partner_id (customer), user_id (project manager), date_start and
+      date (planned end). Use the id as project_id in search_tasks,
+      search_timesheets, log_hours and create_task. All filters are optional
+      and combined with AND. At most 50 per call; page with offset. Read-only.
+    params:
+      - name: q
+        description: Optional. Part of the project name, case-insensitive.
+        type: string
+      - name: partner_id
+        description: Optional. Customer contact id from search_partners.
+        type: integer
+      - name: offset
+        description: Optional. Number of records to skip (paging, steps of 50).
+        type: integer
+    request:
+      method: POST
+      path: /json/2/project.project/search_read
+      encoding: json
+      read_via_post: true
+      body_json:
+        domain:
+          - ["name", "ilike", "{q}"]
+          - ["partner_id", "=", "{partner_id}"]
+        fields: ["id", "name", "partner_id", "user_id", "date_start", "date"]
+        limit: 50
+        offset: "{offset}"
+
+  - name: search_tasks
+    description: >
+      Searches project tasks (model project.task). Returns per task: id, name,
+      project_id, stage_id, state, user_ids (assignees), partner_id,
+      date_deadline, allocated_hours and effective_hours (hours logged so far).
+      Use the id as task_id in search_timesheets and log_hours. All filters are
+      optional and combined with AND. At most 50 per call; page with offset.
+      Read-only.
+    params:
+      - name: project_id
+        description: Optional. Project id from search_projects.
+        type: integer
+      - name: q
+        description: Optional. Part of the task name, case-insensitive.
+        type: string
+      - name: partner_id
+        description: Optional. Customer contact id from search_partners.
+        type: integer
+      - name: offset
+        description: Optional. Number of records to skip (paging, steps of 50).
+        type: integer
+    request:
+      method: POST
+      path: /json/2/project.task/search_read
+      encoding: json
+      read_via_post: true
+      body_json:
+        domain:
+          - ["project_id", "=", "{project_id}"]
+          - ["name", "ilike", "{q}"]
+          - ["partner_id", "=", "{partner_id}"]
+        fields: ["id", "name", "project_id", "stage_id", "state", "user_ids", "partner_id", "date_deadline", "allocated_hours", "effective_hours"]
+        limit: 50
+        offset: "{offset}"
+
+  - name: search_timesheets
+    description: >
+      Searches timesheet lines, i.e. logged hours (model account.analytic.line).
+      Returns per line: id, date, name (description), unit_amount (hours),
+      project_id, task_id, employee_id and partner_id. Dates are YYYY-MM-DD;
+      date_from and date_to are inclusive and may be used alone. All filters
+      are optional and combined with AND. At most 50 lines per call; page with
+      offset. Read-only.
+    params:
+      - name: project_id
+        description: Optional. Project id from search_projects.
+        type: integer
+      - name: task_id
+        description: Optional. Task id from search_tasks.
+        type: integer
+      - name: date_from
+        description: Optional. First day to include, format YYYY-MM-DD.
+        type: string
+      - name: date_to
+        description: Optional. Last day to include, format YYYY-MM-DD.
+        type: string
+      - name: offset
+        description: Optional. Number of records to skip (paging, steps of 50).
+        type: integer
+    request:
+      method: POST
+      path: /json/2/account.analytic.line/search_read
+      encoding: json
+      read_via_post: true
+      body_json:
+        domain:
+          - ["project_id", "=", "{project_id}"]
+          - ["task_id", "=", "{task_id}"]
+          - ["date", ">=", "{date_from}"]
+          - ["date", "<=", "{date_to}"]
+        fields: ["id", "date", "name", "unit_amount", "project_id", "task_id", "employee_id", "partner_id"]
+        limit: 50
+        offset: "{offset}"
+
+  - name: search_contracts
+    description: >
+      Searches customer contracts (model jnpt.contract). Returns per contract:
+      id, name, contract_type (service, subscription, support, nda, other),
+      state, partner_id, project_id, date_start, date_end (false = open-ended)
+      and notice_deadline (last day to give notice before date_end). The
+      contract document itself is never returned. All filters are optional and
+      combined with AND. At most 50 per call; page with offset. Read-only.
+    # Nie `document`/`document_filename`: das Vertrags-PDF (Binärfeld) bleibt in
+    # Odoo. Die Zustände stammen aus dem Modell jnpt.contract.
+    params:
+      - name: partner_id
+        description: Optional. Customer contact id from search_partners.
+        type: integer
+      - name: state
+        description: >
+          Optional. draft = not yet active, active = running, terminated =
+          notice given, ended = over.
+        type: string
+        enum: [draft, active, terminated, ended]
+      - name: offset
+        description: Optional. Number of records to skip (paging, steps of 50).
+        type: integer
+    request:
+      method: POST
+      path: /json/2/jnpt.contract/search_read
+      encoding: json
+      read_via_post: true
+      body_json:
+        domain:
+          - ["partner_id", "=", "{partner_id}"]
+          - ["state", "=", "{state}"]
+        fields: ["id", "name", "contract_type", "state", "partner_id", "project_id", "date_start", "date_end", "notice_deadline"]
+        limit: 50
+        offset: "{offset}"
+
+  - name: search_employees
+    description: >
+      Searches employees (model hr.employee.public — the public part of the
+      employee record, no private data). Returns per employee: id, name,
+      user_id (their Odoo login user, as [id, "Name"] or false) and
+      department_id. Use it to get the employee_id that log_hours requires.
+      All filters are optional and combined with AND. At most 50 per call;
+      page with offset. Read-only.
+    params:
+      - name: q
+        description: Optional. Part of the employee name, case-insensitive.
+        type: string
+      - name: user_id
+        description: Optional. Odoo user id of the employee.
+        type: integer
+      - name: offset
+        description: Optional. Number of records to skip (paging, steps of 50).
+        type: integer
+    request:
+      method: POST
+      path: /json/2/hr.employee.public/search_read
+      encoding: json
+      read_via_post: true
+      body_json:
+        domain:
+          - ["name", "ilike", "{q}"]
+          - ["user_id", "=", "{user_id}"]
+        fields: ["id", "name", "user_id", "department_id"]
+        limit: 50
+        offset: "{offset}"
+
+  - name: log_hours
+    description: >
+      Logs hours on a project, optionally on one of its tasks: creates ONE
+      timesheet line (account.analytic.line) and returns the new id as a list,
+      e.g. [102]. employee_id is REQUIRED — the integration runs as a bot
+      without an employee of its own, so get the id of the person who did the
+      work with search_employees first. If a task_id is given it must belong
+      to the given project. Writes to Odoo; nothing else is changed.
+      This is a WRITE action. It is annotated as such, so your client may ask
+      the user; JanuaPort itself never asks. It needs the tool-exact
+      permission "odoo:log_hours".
+    params:
+      - name: project_id
+        description: Required. Project id from search_projects.
+        type: integer
+        required: true
+      - name: task_id
+        description: Optional. Task id from search_tasks (a task of that project).
+        type: integer
+      - name: employee_id
+        description: Required. Employee id from search_employees — whose hours these are.
+        type: integer
+        required: true
+      - name: date
+        description: Required. Day of the work, format YYYY-MM-DD.
+        type: string
+        required: true
+      - name: name
+        description: Required. Short description of the work done.
+        type: string
+        required: true
+      - name: unit_amount
+        description: Required. Hours as a number, e.g. 1.5 for 90 minutes.
+        type: number
+        required: true
+    write: true
+    request:
+      method: POST
+      path: /json/2/account.analytic.line/create
+      encoding: json
+      body_json:
+        vals_list:
+          - project_id: "{project_id}"
+            task_id: "{task_id}"
+            employee_id: "{employee_id}"
+            date: "{date}"
+            name: "{name}"
+            unit_amount: "{unit_amount}"
+
+  - name: create_task
+    description: >
+      Creates ONE task in a project (project.task) and returns the new id as a
+      list, e.g. [32]. Sets project, name, customer, deadline and an optional
+      description (plain text, keep it short, e.g. a call note). Assigning
+      people, tags or stages is done in Odoo itself. Writes to Odoo.
+      This is a WRITE action. It is annotated as such, so your client may ask
+      the user; JanuaPort itself never asks. It needs the tool-exact
+      permission "odoo:create_task".
+    params:
+      - name: project_id
+        description: Required. Project id from search_projects.
+        type: integer
+        required: true
+      - name: name
+        description: Required. Title of the task.
+        type: string
+        required: true
+      - name: partner_id
+        description: Optional. Customer contact id from search_partners.
+        type: integer
+      - name: date_deadline
+        description: Optional. Deadline, format YYYY-MM-DD.
+        type: string
+      - name: description
+        description: Optional. Description of the task as plain text; keep it short (a few sentences).
+        type: string
+    write: true
+    request:
+      method: POST
+      path: /json/2/project.task/create
+      encoding: json
+      body_json:
+        vals_list:
+          - project_id: "{project_id}"
+            name: "{name}"
+            partner_id: "{partner_id}"
+            date_deadline: "{date_deadline}"
+            description: "{description}"
+
+  - name: set_lead_stage
+    description: >
+      Moves ONE CRM lead to another pipeline stage and returns true. It changes
+      ONLY the stage — no other field of the lead can be written through this
+      integration. Take the numeric stage_id from list_stages (never guess it
+      from a name); the stage with is_won = true means won (in the reference
+      setup: stage 4, "Kunde"). Odoo then sets probability and the closing
+      date itself. There is no "lost" action here. Writes to Odoo.
+      This is a WRITE action. It is annotated as such, so your client may ask
+      the user; JanuaPort itself never asks. It needs the tool-exact
+      permission "odoo:set_lead_stage".
+    params:
+      - name: lead_id
+        description: Required. Lead id from search_leads.
+        type: integer
+        required: true
+      - name: stage_id
+        description: Required. Target stage id from list_stages.
+        type: integer
+        required: true
+    write: true
+    request:
+      method: POST
+      path: /json/2/crm.lead/write
+      encoding: json
+      body_json:
+        ids: ["{lead_id}"]
+        vals:
+          stage_id: "{stage_id}"
+
+  - name: list_task_notes
+    description: >
+      Lists the internal notes ("Log note") in the chatter of ONE task
+      (project.task), newest first: id, date and body. Only internal notes
+      are returned — no e-mails, no messages sent to followers, no customer
+      replies from the portal, no tracked field changes. body is Odoo HTML,
+      cut to 2000 characters (false or null when empty). Notes are written by
+      staff but may quote customer text. At most 20 notes per call; if you get
+      20, call again with offset 20, 40, … to see older ones. Read-only.
+      Needs a separate integration with an internal Odoo user; with the bot
+      of the other tools (not an internal user) it fails with HTTP 403.
+    params:
+      - name: task_id
+        description: Required. Task id from search_tasks.
+        type: integer
+        required: true
+      - name: offset
+        description: Optional. Number of notes to skip (paging, steps of 20).
+        type: integer
+    request:
+      method: POST
+      path: /json/2/mail.message/search_read
+      encoding: json
+      read_via_post: true
+      body_json:
+        domain:
+          - ["model", "=", "project.task"]
+          - ["res_id", "=", "{task_id}"]
+          - ["message_type", "=", "comment"]
+          - ["subtype_id.internal", "=", true]
+        fields: ["id", "date", "body"]
+        order: "date desc, id desc"
+        limit: 20
+        offset: "{offset}"
+    response: "[].{id: id, date: date, body: body[:2000]}"
+
+  - name: list_partner_notes
+    description: >
+      Lists the internal notes ("Log note") in the chatter of ONE contact
+      (res.partner, company or person), newest first: id, date and body. Only
+      internal notes are returned — no e-mails, no messages sent to followers,
+      no customer replies from the portal, no tracked field changes. body is
+      Odoo HTML, cut to 2000 characters (false or null when empty). Notes are
+      written by staff but may quote customer text. At most 20 notes per call;
+      if you get 20, call again with offset 20, 40, … to see older ones.
+      Read-only. Needs a separate integration with an internal Odoo user; with
+      the bot of the other tools (not an internal user) it fails with HTTP 403.
+    params:
+      - name: partner_id
+        description: Required. Contact id from search_partners.
+        type: integer
+        required: true
+      - name: offset
+        description: Optional. Number of notes to skip (paging, steps of 20).
+        type: integer
+    request:
+      method: POST
+      path: /json/2/mail.message/search_read
+      encoding: json
+      read_via_post: true
+      body_json:
+        domain:
+          - ["model", "=", "res.partner"]
+          - ["res_id", "=", "{partner_id}"]
+          - ["message_type", "=", "comment"]
+          - ["subtype_id.internal", "=", true]
+        fields: ["id", "date", "body"]
+        order: "date desc, id desc"
+        limit: 20
+        offset: "{offset}"
+    response: "[].{id: id, date: date, body: body[:2000]}"
+
+  - name: add_task_note
+    description: >
+      Adds ONE internal note ("Log note") to the chatter of a task
+      (project.task), written as the bot user. It is an internal note only: no
+      one is notified and no e-mail is sent, not even to followers. The text
+      is plain text; Odoo stores it escaped, so markup is shown as text. Keep
+      it short (a few sentences, e.g. the result of a call). Notes on
+      contacts or leads cannot be written here. Writes to Odoo. Needs a
+      separate integration with an internal Odoo user; with the bot of the
+      other tools (not an internal user) it fails with HTTP 403.
+      This is a WRITE action. It is annotated as such, so your client may ask
+      the user; JanuaPort itself never asks. It needs the tool-exact
+      permission "odoo:add_task_note".
+    params:
+      - name: task_id
+        description: Required. Task id from search_tasks.
+        type: integer
+        required: true
+      - name: body
+        description: Required. The note as plain text; keep it short (a few sentences).
+        type: string
+        required: true
+    write: true
+    request:
+      method: POST
+      path: /json/2/project.task/message_post
+      encoding: json
+      body_json:
+        ids: ["{task_id}"]
+        body: "{body}"
+        message_type: comment
+        subtype_xmlid: mail.mt_note
