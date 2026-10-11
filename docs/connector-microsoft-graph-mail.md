@@ -7,7 +7,8 @@ sind nicht nötig, ein Exchange-Online-Admin-Zugang schon.
 
 ## 1. Was der Connector kann — und was er ausdrücklich nicht kann
 
-**Fünf Werkzeuge, mehr nicht:**
+**Acht Werkzeuge insgesamt: fünf aus der YAML-Spec und drei Go-native.**
+Die fünf YAML-Werkzeuge:
 
 | Tool | Was es tut | Art |
 |---|---|---|
@@ -24,6 +25,16 @@ bekommt **kein** `Mail.Send`. Microsoft schreibt zur Rolle
 `Application Mail.ReadWrite` ausdrücklich: *„Doesn't include permission to send
 mail."* Ein Agent kann über diesen Weg also nicht senden, selbst wenn er es
 wollte.
+
+**Bestätigung (heute, Fassung 2.0.2):** Alle Schreibwerkzeuge dieser
+Integration (`create_draft` und die drei Go-nativen unten) sagen der KI
+dasselbe: Sie sind als Schreibvorgang annotiert, der Client kann deshalb
+nachfragen, JanuaPort selbst fragt nie, und sie brauchen das tool-genaue
+Recht. Der frühere Satz „a human must confirm it … do not call it
+autonomously" ist weg — ein produktiver Agent wartete sonst auf eine
+Bestätigung, die nie kommt. Eine bestehende Mail-Integration ist eine Kopie der
+Vorlage und behält den alten `create_draft`-Text, bis sie auf 2.0.2 angehoben
+wird; die drei Go-nativen Werkzeuge sprechen sofort den neuen Text.
 
 **Anhänge: die KI bekommt den INHALT als Text, nie die Datei.** Der typische
 Fall ist die Eingangsrechnung als PDF-Anhang. `list_attachments` zeigt, was an
@@ -59,7 +70,14 @@ der historische Typ `write_target` lädt seit Story #729 als Alias derselben
 Ablage-Art). Die KI wählt `ziel` (den Namen der Ablage) und **nur den
 Namensstamm** von `dateiname` — die tatsächliche Dateiendung setzt JanuaPort
 selbst, abgeleitet aus dem von Graph gemeldeten Inhaltstyp des Anhangs, nie
-aus der Eingabe der KI. Grund: Die Ablage ist üblicherweise eine
+aus der Eingabe der KI. Meldet Graph einen nicht gelisteten Typ — Outlook
+deklariert Anhänge gern als `application/octet-stream` —, erkennt JanuaPort den
+Inhalt und vergibt die Endung aus derselben Erlaubtliste : ein PDF wird
+`.pdf`, ebenso PNG, JPEG, GIF; Text wird `.txt`, Unbekanntes `.bin`. Der
+Original-Dateiname des Absenders bestimmt die Endung nie (ein `x.pdf` mit
+Text-Inhalt wird nicht `.pdf`). **docx/xlsx** sind ZIP-Container und bleiben
+`.bin`, wenn Graph sie nicht als Word/Excel deklariert — bewusst, die Endung
+wird nicht aus dem Container-Inhalt geraten. Grund: Die Ablage ist üblicherweise eine
 Windows-Freigabe im Kundennetz, und eine frei gewählte Endung hieße, dass eine
 eingehende Mail dort ein `.ps1`/`.exe` platzieren lassen könnte.
 
@@ -68,7 +86,8 @@ annotiert (der Client kann nachfragen, JanuaPort selbst fragt nie), und
 es braucht den **tool-genauen** Scope
 `microsoft-graph-mail:save_attachment` — ein Scope auf die ganze Integration
 deckt es nicht (Schritt 5 unten). Es rührt das Postfach nicht an (nichts wird
-gelöscht, verschoben oder als gelesen markiert) und wertet den Inhalt nicht aus
+gelöscht, verschoben oder als gelesen markiert — dafür gibt es
+das eigene Werkzeug `move_message`, s. u.) und wertet den Inhalt nicht aus
 (kein OCR, keine Klassifikation, kein Umbenennen nach Rechnungsinhalt — das tut
 die KI weiterhin über `read_attachment`). Ein Anhang je Aufruf, nur
 `fileAttachment` (kein `isInline`, kein `itemAttachment`/`referenceAttachment`).
@@ -88,7 +107,152 @@ Token braucht also ZWEI Scopes, um erfolgreich abzulegen:
 unabhängige Berechtigungs-Achsen, keine implizite Ableitung der einen aus
 der anderen.
 
-**Welche Postfächer kommen als Ziel infrage?** Alle drei Werkzeuge sprechen das
+⚠️ **Heute:** Ein Anhang aus einem pseudonymisierten Postfach landet nur
+in einer pseudonymisierten Ablage. Gilt für `read_attachment` eine
+wirksame Deklaration (im Spec-Default, integrationsweit oder am Werkzeug —
+die **effektive** Deklaration, Hauptschalter inklusive), lehnt
+`save_attachment` jede Ziel-Ablage ab, die selbst nicht pseudonymisiert ist
+— sonst holte `get_file`/`read_file` den Anhang dort im Klartext ab. Warum
+gerade `read_attachment`: Es ist das einzige Werkzeug dieser Integration, das
+Anhang-**Inhalt** an die KI gibt; seine Deklaration ist die Aussage des
+Betreibers über Anhänge. Eine Deklaration nur auf `list_messages` (Absender,
+Betreff) betrifft Metadaten und zählt hier bewusst nicht. Die Prüfung läuft
+nach der Ziel-Prüfung und **vor** dem Abruf bei Graph; die Meldung sagt ehrlich,
+warum (ohne Dateinamen), das Audit trägt `denied`. Ist eine der beiden
+Deklarationen nicht lesbar, wird nichts abgerufen und nichts abgelegt
+(Konfigurationsfehler).
+
+⚠️ **Heute:** Gefährliche Anhänge werden abgewiesen, nicht abgelegt. Jeder
+Anhang läuft durch dieselbe Namens- und Inhaltsprüfung wie `write_file`. Der
+Grund: Eine Datei in der Ablage (SMB, Share) trägt keine Internet-Markierung,
+Office öffnet sie ohne geschützte Ansicht, und „Makros aus dem Internet
+blockieren" greift nicht. Derselbe Anhang, direkt in Outlook geöffnet, bekäme
+die Markierung. Abgewiesen werden:
+
+- Anhänge mit **ausführbarem Programmcode** (PE, ELF, Mach-O) — auch wenn der
+  Absender sie als `application/pdf` deklariert;
+- **docx/xlsx mit Makros** (VBA-Projekt) oder mit einer **externen Beziehung**
+  (nachgeladene Vorlage `attachedTemplate`, verknüpftes Objekt; Hyperlinks
+  bleiben erlaubt);
+- **alte Office-Formate und andere CFB-Container:** alte `.doc`/`.xls`,
+  **passwortgeschützte** docx/xlsx und **angehängte Outlook-Nachrichten**
+  (`.msg`, z. B. eine „als Anlage weitergeleitete“ Rechnung). `save_attachment`
+  vergibt für sie die Endung `.bin` (`.doc`/`.xls` stehen heute nicht mehr
+  in der Endungstabelle), der Inhalt wird trotzdem als CFB erkannt;
+- ein **Namensstamm**, der eine Namensregel verletzt (unsichtbare Format- oder
+  Bidi-Zeichen wie U+202E, `: * ? " < > |`, Windows-Gerätenamen).
+
+Die Absage ist ein Argumentfehler (Audit `argument_error`), in der Ablage liegt
+danach nichts. Die Meldung nennt den gesendeten Namensstamm, nie den Inhalt.
+**Was der Betreiber tut:** Ein Mensch öffnet die Mail in Outlook und legt den
+Anhang selbst ab (dort mit Internet-Markierung). Ein erneuter Aufruf mit
+anderem `dateiname` hilft nicht.
+
+### Ein siebtes Werkzeug, ebenfalls nicht aus dieser Datei: `move_message`
+
+`microsoft-graph-mail_move_message` ist das zweite **Go-native**
+Werkzeug an dieser Integration — aus demselben Grund wie `save_attachment`
+nicht in dieser YAML: Der Lesestatus einer Nachricht ist bei Graph ein
+`PATCH`, und das Spec-Format kennt bewusst nur `GET` und `POST`.
+
+`move_message(mailbox, message_id, folder, mark_unread=true)` verschiebt
+**eine** Nachricht in einen anderen Ordner **desselben** Postfachs und
+markiert sie dabei als **ungelesen**. Das ist der Weg für Unklares
+(PO-Entscheid 16.09.2026): Die Mail landet im Ordner „Unklar"
+und leuchtet dort als neu auf — ein Mensch sieht sie, ohne dass irgendetwas
+weitergeleitet wurde.
+
+**Der Ordner wird über seinen Anzeigenamen benannt** („Unklar"), nie über eine
+Graph-ID: Die KI kennt keine IDs, und den Ordner hat ein Mensch angelegt.
+**Voraussetzung: Der Ordner existiert.** Dieses Werkzeug legt keine Ordner an
+— gibt es ihn nicht, endet der Aufruf mit genau dieser Begründung, und am
+Postfach ändert sich nichts. Gesucht wird er auf der **obersten Ebene** des
+Postfachs und anschließend unter den **Unterordnern des Posteingangs**; liegt
+er tiefer verschachtelt, findet dieses Werkzeug ihn nicht (bewusste Grenze,
+s. §9).
+
+Wie `create_draft` und `save_attachment` ist es ein **Schreib**-Werkzeug: Es
+ist als solches annotiert (der Client kann nachfragen, JanuaPort selbst fragt
+nie), und es braucht den **tool-genauen** Scope
+`microsoft-graph-mail:move_message` — ein Scope auf die ganze Integration
+deckt es nicht (Schritt 5 unten). Ein zweites Recht wie bei `save_attachment`
+gibt es nicht: Es wird nichts in eine andere Integration geschrieben.
+
+**Was es ausdrücklich nicht tut:** kein Weiterleiten, kein Senden, kein
+Löschen, kein Anlegen von Ordnern, kein Verschieben in ein **anderes**
+Postfach (strukturell unmöglich — die Exchange-Beschränkung aus Schritt 4 gilt
+weiterhin für jeden Aufruf), keine Sammelaktion („verschiebe alle, die …" ist
+die Entscheidung der KI, Nachricht für Nachricht).
+
+⚠️ **Die Nachrichten-ID ändert sich nur, wenn der Ordner wechselt** (Graph-Verhalten,
+nicht unsere Entscheidung; live belegt). Beim Verschieben in einen
+**anderen** Ordner vergibt Graph eine **neue** ID, die alte antwortet danach mit 404.
+Beim Verschieben in den Ordner, in dem die Nachricht schon liegt, bleibt die ID gleich
+. Deshalb gibt `move_message` die ID zurück :
+
+- **Die Antwort trägt `message_id`** mit der aktuell gültigen ID, und der Text nennt
+  beide („bisher … jetzt …, die bisherige gilt nicht mehr"). Die KI nimmt für jeden
+  Folgeschritt (Anhang ablegen, als gelesen markieren, Entwurf) die ID aus
+  `message_id`.
+- **Blieb die ID gleich**, sagt der Text, dass sie unverändert gilt, und behauptet
+  keine neue. `message_id` trägt dann die gleiche, weiter gültige ID.
+- **Liefert Graph keine brauchbare `id`** (sie fehlt, ist leer oder kein String), ist
+  das Verschieben trotzdem erfolgt: Die Antwort meldet Erfolg **ohne** `message_id`,
+  mit dem Hinweis „Wechselt der Ordner, vergibt Graph eine neue Nachrichten-ID; die
+  aktuelle liefert list_messages." Es gibt keinen Fehler und keinen zweiten
+  Graph-Aufruf.
+- **Die Werkzeug-Beschreibung** sagt der KI dasselbe: Die bisherige ID ist nach einem
+  Ordnerwechsel ungültig, die Antwort trägt die aktuelle.
+
+**Im Protokoll stehen Postfach, Nachrichten-IDs und Ordnername — nie Betreff, Absender
+oder Text.** Die neue ID steht im Detail des bestehenden Audit-Ereignisses (ein
+Selektor; kein zusätzliches Ereignis). Graph antwortet auf das Verschieben mit der
+vollständigen Nachricht, aber **nur das Feld `id` betritt den Prozess**: Der
+Move-Request deklariert die Antwort-Projektion `{id: id}`, alles andere (Betreff,
+Absender, Text, Vorschau) wird gar nicht erst gelesen und erscheint weder in der
+Antwort noch im Audit noch im Log. Die Antwort auf das Setzen des Lesestatus wird
+weiterhin überhaupt nicht gelesen.
+
+### Ein achtes Werkzeug, ebenfalls nicht aus dieser Datei: `mark_read`
+
+`microsoft-graph-mail_mark_read` ist das dritte **Go-native**
+Werkzeug an dieser Integration, aus demselben Grund wie `move_message`: Der
+Lesestatus ist bei Graph ein `PATCH`, und das Spec-Format kennt nur `GET` und
+`POST`.
+
+`mark_read(mailbox, message_id)` markiert **eine** Nachricht als **gelesen**,
+**ohne sie zu verschieben**. Sie bleibt in ihrem Ordner und behält ihre
+Nachrichten-ID. Dafür sendet JanuaPort genau einen Request:
+`PATCH /v1.0/users/{mailbox}/messages/{id}` mit dem festen Inhalt
+`{"isRead": true}`.
+
+**Abgrenzung zu `move_message`:** Wer eine Nachricht in einen anderen Ordner
+legen will (optional als ungelesen, damit ein Mensch sie dort als neu sieht),
+nimmt `move_message`. Wer nur festhalten will, dass eine Nachricht bearbeitet
+ist, nimmt `mark_read`. Als **ungelesen** markieren kann nur `move_message`
+(`mark_unread`); `mark_read` hat dafür keinen Schalter. Beide
+Werkzeug-Beschreibungen sagen das der KI.
+
+**Recht:** Es ist ein **Schreib**-Werkzeug. Es ist als solches annotiert (der
+Client kann nachfragen, JanuaPort selbst fragt nie), und es braucht den
+**tool-genauen** Scope `microsoft-graph-mail:mark_read`; ein
+Scope auf die ganze Integration deckt es nicht (Schritt 5 unten). In Microsoft
+365 braucht es **keine neue Berechtigung**: `Mail.ReadWrite` ist schon
+vergeben, und die Postfach-Grenze aus Schritt 4 gilt unverändert.
+
+**Was es ausdrücklich nicht tut:** nicht verschieben, nicht löschen, nicht
+senden, keine weiteren Eigenschaften (Markierung, Kategorien, Wichtigkeit),
+keine Sammelaktion.
+
+**Im Protokoll stehen Postfach und Nachrichten-ID, nie Betreff, Absender oder
+Text.** Graph antwortet auf das `PATCH` mit der vollständigen Nachricht;
+JanuaPort liest diese Antwort gar nicht erst ein. Die KI
+bekommt nur eine Bestätigung. Ist die ID unbekannt (HTTP 404, etwa weil die
+Nachricht vorher mit `move_message` verschoben wurde und dabei eine neue ID
+bekam; die neue steht in der Antwort von `move_message`, Feld `message_id`), sagt die
+Meldung, dass `list_messages` die aktuelle ID liefert.
+
+**Welche Postfächer kommen als Ziel infrage?** Die Postfach-Werkzeuge sprechen das
 Postfach über `/users/{smtp-adresse}/messages` an. Daraus folgt, welche Form
 sich eignet und welche nicht:
 
@@ -178,7 +342,7 @@ die Obermenge. **Kein neuer Consent, kein zusätzlicher Handgriff im Portal.**
 >
 > Verengt wird an zwei anderen Stellen:
 >
-> * **In JanuaPort** auf genau die drei Tools oben: Deny-by-default, ein Token bekommt
+> * **In JanuaPort** auf die acht beschriebenen Werkzeuge: Deny-by-default, ein Token bekommt
 >   nur, was ihm ausdrücklich erlaubt wurde, das Schreib-Tool zusätzlich nur über
 >   einen **tool-genauen** Scope — und jeder Aufruf steht im Audit-Log.
 > * **In Exchange** auf genau ein Postfach (Schritt 4).
@@ -315,14 +479,16 @@ sieht ein Agent gar nichts):
 jnpt token allow <token-id> microsoft-graph-mail                     # die vier Lese-Tools
 jnpt token allow <token-id> microsoft-graph-mail:create_draft        # der Entwurfs-Weg, EXTRA
 jnpt token allow <token-id> microsoft-graph-mail:save_attachment     # die Ablage, EXTRA (Story #718)
+jnpt token allow <token-id> microsoft-graph-mail:move_message # das Verschieben, EXTRA
+jnpt token allow <token-id> microsoft-graph-mail:mark_read # als gelesen markieren, EXTRA
 jnpt token allow <token-id> eingang-rechnungen:write_file            # das Ablegen-Recht AUF DER ZIEL-ABLAGE (Story #729)
 ```
 
-Die zweite und dritte Zeile sind kein Versehen: **Ein integrationsweiter Scope
+Die zweite bis fünfte Zeile sind kein Versehen: **Ein integrationsweiter Scope
 erfasst Schreib-Tools nie.** „Gib dem Token das Postfach" vergibt damit nie
-versehentlich das Anlegen von Entwürfen oder das Ablegen von Anhängen — beides
-muss ausdrücklich erteilt werden (in der Admin-Oberfläche entsprechend über den
-eigenen Schalter für Schreibrechte). Die VIERTE Zeile ist seit Story #729
+versehentlich das Anlegen von Entwürfen, das Ablegen von Anhängen, das
+Verschieben von Nachrichten oder das Setzen des Lesestatus — alle vier müssen ausdrücklich erteilt werden (in der Admin-Oberfläche entsprechend über den
+eigenen Schalter für Schreibrechte). Die SECHSTE Zeile ist
 zusätzlich nötig: `save_attachment` braucht eine konfigurierte Ziel-Ablage
 (`type: ablage`, `docs/file-connector-spec.md`) UND das Recht
 `<ziel>:write_file` auf genau dieser Ablage — ohne beides lehnt das Werkzeug
@@ -378,30 +544,31 @@ die Admin-Oberfläche. Typische Antworten und was sie bedeuten:
   nie die Bytes und nie einen Download-Link, sondern den daraus gewonnenen Text.
   ⚠️ **Seit Story #728 ist das dieselbe Ergebnisform wie `read_file` auf einer
   Ablage** (`type: ablage`, `docs/file-connector-spec.md`) — derselbe Extraktor
-  (#703/#707), über die geteilte Fähigkeit `internal/filetext`, mit demselben
+  über die geteilte Fähigkeit zur Textextraktion (Produkt-Doku, nicht öffentlich), mit demselben
   prozessweiten Zeit-/Nebenläufigkeits-Deckel (ein Kontingent von zwei
   gleichzeitigen Extraktionen, geteilt zwischen BEIDEN Werkzeugen). Konkret:
   - **Gelesen werden** die Textebene eines PDF, das in einer E-Rechnung
     (ZUGFeRD/Factur-X) eingebettete XML, sowie XML, Text, CSV und JSON, wie sie
     sind.
-  - **Auch Word, Excel und PowerPoint** (`docx`, `xlsx`, `pptx`, `kind`
-    entsprechend): Word als Absätze, Excel Blatt für Blatt
+  - **Auch Word, Excel und PowerPoint** (`docx`, `xlsx`, `pptx`,
+    `kind` entsprechend): Word als Absätze, Excel Blatt für Blatt
     (`## Blatt: <Name>`, Zellen durch Tab, Zahlen roh, Datumswerte als
     Excel-Seriennummer), PowerPoint Folie für Folie (`## Folie N`). Erkannt
     am Inhalt, nicht am `contentType` des Absenders; gedeckelt gegen
-    Zip-Bomben. Für den Text gelten dieselben Pseudonymisierungs-Regeln wie
-    für PDF-Text. Gelesen, nie ausgeführt: Makros, eingebettete Objekte und
+    Zip-Bomben (Einzelheiten und Grenzen: `docs/file-connector-spec.md`,
+    „Office lesen"). Der Text läuft durch dieselbe Pseudonymisierung wie
+    PDF-Text. Gelesen, nie ausgeführt: Makros, eingebettete Objekte und
     Formeln werden nicht angefasst.
   - **Nicht gelesen werden** alte Office-Dateien (`.doc`, `.xls`, `.ppt`),
     passwortgeschützte Office-Dateien, Bilder, `.eml` und ZIP. Sie kommen mit
     Typ und Größe zurück und der ausdrücklichen Auskunft, dass der Inhalt nicht
     zu lesen ist — damit kein Agent ihn rät.
   - **Die Vorlage steht dafür auf Fassung 2.0.1** (nur die Beschreibung von
-    `read_attachment`), seit dem neuen Satz für Schreibwerkzeuge auf 2.0.2
-    (nur die Beschreibung von `create_draft`). ⚠️ Eine bestehende
-    Mail-Integration ist eine KOPIE der Vorlage in der Datenbank und behält den
-    alten Text, bis der Betreiber sie anhebt. Gelesen wird Office trotzdem
-    sofort — der alte Text verspricht nur weniger, als das Werkzeug kann.
+    `read_attachment`). ⚠️ Eine bestehende Mail-Integration ist eine KOPIE der
+    Vorlage in der Datenbank und behält den alten Text („Word, Excel … nicht
+    lesbar"), bis der Betreiber sie auf 2.0.1 anhebt. Gelesen wird Office
+    trotzdem sofort — der alte Text verspricht nur weniger, als das Werkzeug
+    kann.
   - **Ein gescanntes PDF hat keine Textebene.** Dann kommt leerer Text plus eine
     Notiz, die das sagt. **Es gibt kein OCR** in dieser Version.
   - **Ein verschlüsseltes PDF wird nicht gelesen.** Das gilt auch für Dateien,
@@ -409,7 +576,7 @@ die Admin-Oberfläche. Typische Antworten und was sie bedeuten:
     verschlüsseln, um Bearbeitung zu verhindern, obwohl ein Mensch den Inhalt
     ohne Nachfrage sehen kann. Die Antwort kommt mit leerem Text und einer
     Notiz, die die Verschlüsselung ehrlich benennt (kein Passwort-Raten, keine
-    Entschlüsselung — Scope-Grenze `internal/extract`). Unterstützt wird nur
+    Entschlüsselung — Scope-Grenze (Produkt-Doku, nicht öffentlich)). Unterstützt wird nur
     Verschlüsselungsversion V ≤ 4; ein modern verschlüsseltes PDF (V=5,
     AES-256) fällt in dieselbe Notiz.
   - **PDF-Text bewahrt die Wörter, nicht das Layout.** Mehrspaltige Rechnungen
@@ -446,6 +613,18 @@ die Admin-Oberfläche. Typische Antworten und was sie bedeuten:
 - **Das Postfach ist kein Archiv.** Nachrichten können jederzeit von Menschen
   verschoben oder gelöscht werden; die Liste umfasst alle Ordner (auch Gelöschte
   Objekte und Entwürfe), solange man nicht einschränkt.
+- **`move_message` findet einen Ordner auf zwei Ebenen, nicht überall**
+. Gesucht wird der Anzeigename auf der **obersten Ebene** des
+  Postfachs und unter den **direkten Unterordnern des Posteingangs** — das
+  sind die beiden Stellen, an denen ein Mensch „Unklar" üblicherweise anlegt.
+  Ein tiefer verschachtelter Ordner („Posteingang → 2026 → Unklar") wird nicht
+  gefunden; der Aufruf endet dann mit „gibt es nicht", und am Postfach ändert
+  sich nichts. Graph kennt keine Ordner-Suche über alle Ebenen in einem
+  Aufruf, und ein Durchlaufen des ganzen Ordnerbaums wäre teuer und
+  unberechenbar. Zwei gleichnamige Ordner auf derselben Ebene werden
+  abgelehnt statt geraten. Und: **Nur beim Wechsel in einen anderen Ordner vergibt Graph eine neue
+  Nachrichten-ID** — die vorherige ist dann ungültig. Im selben Ordner bleibt
+  sie unverändert; die gültige ID steht in `message_id`.
 - **Kein `privacy:`-Block.** Ein Postfach führt personenbezogene Daten. Welche
   Felder pseudonymisiert gehören, ist eine eigene fachliche Bewertung (#328) und
   ausdrücklich nicht Teil dieses Connectors. Im **Audit** wird lediglich der
@@ -482,7 +661,8 @@ Teil davon bestätigt; was er nicht berührt hat, bleibt hier offen benannt:
   folge bei mehrspaltigen Layouts leidet, sagt erst der Lauf gegen echte Post.
 - **(#718, offen) `save_attachment` gegen die echte API.** Gegen Stubs/Fixtures
   belegt: Byte-Abruf über dieselbe Sicherheitskette wie `read_attachment`,
-  Endungs-Ableitung aus dem Content-Type, Rückwandlung, Kollisionsschutz. Ein
+  Endungs-Ableitung aus dem Content-Type (heute bei octet-stream aus dem
+  erkannten Inhalt), Rückwandlung, Kollisionsschutz. Ein
   Live-Lauf am Pilotpostfach müsste zusätzlich zeigen: (a) dass der von Graph
   auf `/$value` tatsächlich gemeldete `Content-Type` für ein reales
   PDF-Anhang-Attachment die erwartete Endung `.pdf` ergibt (die Fixtures setzen
@@ -492,6 +672,52 @@ Teil davon bestätigt; was er nicht berührt hat, bleibt hier offen benannt:
   #716-Fund (BOX: auf CIFS ist `fchmod` ein wirkungsloser No-Op); (c) die
   Postfach-Gegenprobe (nach dem Aufruf ist die Nachricht unverändert: nicht
   gelesen, nicht verschoben).
+- **`move_message` gegen die echte API — LIVE BELEGT 23.09.2026**
+  (Showcase 0.61.0, Postfach der Ein-Postfach-Grenze, Testordner
+  `Posteingang/Test` und `Root-Test` auf oberster Ebene; Tabelle im Issue).
+  Vorher gegen einen Fake-Graph belegt: die drei Requests in fester Reihenfolge
+  samt Pfaden, `$filter` und JSON-Bodys, der Ordner-Wächter, die Ablehnung ohne
+  Namenstreffer, kein Graph-Fremdtext in der Antwort. Live bestätigt:
+  (a) der Anzeigenamen-Filter greift auf beiden Wegen — Unterordner des
+  Posteingangs **und** Ordner der obersten Ebene wurden gefunden;
+  (b) erneutes Verschieben in den Ordner, in dem die Nachricht schon liegt, ist
+  ein Erfolg, kein Fehler; (c) die Nachricht erscheint im Zielordner als
+  ungelesen; (d) **Graph vergibt beim Ordnerwechsel eine neue Nachrichten-ID** —
+  die alte ID antwortet danach mit **404**; (e) Audit: je Aufruf ein
+  Write-Ereignis ohne Betreff und ohne Inhalt. Nachrichten-ID und Ordnername
+  stehen im Audit, weil beide Argumente sind und `move_message` kein Argument
+  redigiert (`addMailMoveMessageToMeta`, Test
+  `TestAddMailMoveMessageToMetaTraegtWriteUndKeinenInhalt`) — live abgelesen
+  wurde die Listenansicht, nicht das Detail.
+  **Mitbelegt: die fail-safe-Reihenfolge.** Ein Aufruf mit veralteter ID
+  scheiterte schon beim Setzen des Lesestatus und meldete „… wurde NICHT
+  verschoben" — nichts wurde verändert.
+  ⚠️ **Fußangel für Agenten (zum Zeitpunkt des Belegs; behoben heute):** Die
+  Erfolgsmeldung nannte damals die **eingegebene** ID, wer mit ihr
+  weiterarbeitete, bekam 404. Heute trägt die Antwort die neue ID im Feld
+  `message_id`; der **Live-Nachbeleg** (neue ID aus der Antwort → `get_message`
+  200) steht noch aus.
+- **`mark_read` gegen die echte API — LIVE BELEGT 07.10.2026**
+  (Showcase 0.72.0, Postfach der Ein-Postfach-Grenze, Wegwerf-Token mit
+  `microsoft-graph-mail`, `:mark_read` und `:move_message`). Vorher gegen einen
+  Fake-Graph belegt: genau ein `PATCH …/messages/{id}` mit
+  `Content-Type: application/json` und dem Body `{"isRead":true}`, keine
+  Nachrichten-Inhalte in Antwort und Audit, 401/403/404 unterscheidbar. Live
+  bestätigt: (a) eine gelesene Nachricht wurde per `move_message`
+  (`mark_unread=true`) in ihrem eigenen Ordner auf ungelesen gesetzt und stand
+  danach im Filter `isRead eq false`; (b) `mark_read` → Erfolg, derselbe Filter
+  zeigt sie nicht mehr, Ordner und ID unverändert; (c) ein zweiter Aufruf ist
+  idempotent; (d) eine wohlgeformte, unbekannte ID → **404** mit dem Hinweis auf
+  `list_messages`, eine formal ungültige ID → **400**, jeweils „es wurde nichts
+  verändert"; (e) Audit: `mark_read` als Write **ohne** Write-ahead-Absicht,
+  `move_message` als Absicht plus Ergebnis, in keinem Ereignis Betreff,
+  Text oder Absender.
+  `list_messages` projiziert `isRead` nicht, deshalb läuft die Gegenprobe über
+  den Filter.
+  ⚠️ **Befund nebenbei:** Beim Verschieben in den Ordner, in dem die Nachricht
+  schon liegt, vergibt Graph **keine** neue ID. Der damalige Erfolgstext von
+  `move_message` behauptete das trotzdem; heute sagt der Text in
+  diesem Fall, dass die ID unverändert gilt.
 
 ## Beilage: fertiges Skript für Schritt 4 (Variante A)
 

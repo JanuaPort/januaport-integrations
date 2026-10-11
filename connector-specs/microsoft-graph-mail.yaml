@@ -50,7 +50,7 @@
 # ENVELOPE-ABGLEICH gegen die Graph-Doku (#73-Lehre — die Runtime-Header sind
 # Runtime-Sache, die fachlichen deklariert die Spec seit #347):
 #   * `Authorization: Bearer <token>` — Doku-Pflicht; die Runtime setzt ihn aus
-#     `auth.template`, der Token kommt app-only aus `internal/oauth2cc`.
+#     `auth.template`, der Token kommt aus dem app-only Token-Austausch.
 #   * `Accept: application/json` — die Runtime setzt ihn auf JEDEN Request
 #     (#73). Graph verlangt ihn nicht, es schadet aber nicht: Graph antwortet
 #     ohnehin JSON. AUSNAHME `read_attachment` (#703): Dort steht ein statischer
@@ -89,7 +89,7 @@
 # anfangen. `list_attachments` trägt deshalb ein FESTES `$select` ohne dieses
 # Feld, und keine Projektion nennt es. Wer es „nachrüsten" will: Der Weg zum
 # Inhalt heißt `read_attachment`, und der liefert TEXT. Ein Wächter-Test
-# (internal/connector/mail_spec_test.go) hält beide Richtungen fest.
+# (Produkt-Doku, nicht öffentlich) hält beide Richtungen fest.
 #
 # BEWUSST NICHT DRIN (Scope-Grenzen #332, nachgezogen in #703): kein Versand-Tool,
 # kein ANHÄNGEN von Dateien an einen Entwurf, kein Herunterladen von Anhängen als
@@ -106,22 +106,30 @@
 # einen Anhang überhaupt anfasst. `save_attachment` ist KEIN YAML-Werkzeug
 # dieser Datei — es existiert nicht in `tools:` unten und hat kein
 # `response`/`response_file`-Feld hier zu deklarieren. Es ist ein GO-NATIVES
-# Werkzeug (`cmd/jnpt/mail_save_attachment.go`, Präzedenz: internal/kartei,
-# internal/usecase, internal/wissen), das `internal/connector/runtime.
-# Executor.FetchFile` (denselben Sicherheitspfad wie `read_attachment`, nur
+# Werkzeug, das denselben Sicherheitspfad wie read_attachment nutzt, nur
 # gestoppt VOR der Text-Extraktion) als Go-Funktion aufruft und die Bytes
 # serverseitig — nie über ein MCP-Feld — an eine konfigurierte
 # Schreibziel-Datei-Integration weiterreicht. Der Grund, warum es NICHT als
 # YAML-Tool dieser Spec geht: `write: true` verlangt `request.method: POST`
-# (`internal/connector/load.go`), der Byte-Abruf ist aber ein GET gegen Graph
+# (Produkt-Doku, nicht öffentlich), der Byte-Abruf ist aber ein GET gegen Graph
 # — die Tool-SEMANTIK (Schreiben, Bestätigung, tool-genauer Scope) und die
 # HTTP-Methode (Lesen) laufen hier auseinander. Details:
-# `docs/write-path-design.md` §9, `docs/connector-microsoft-graph-mail.md` §9.
+# Schreibpfad (Produkt-Doku, nicht öffentlich);
+# docs/connector-microsoft-graph-mail.md §9.
+
+# Drei zusätzliche Go-native Schreibwerkzeuge stehen nicht in dieser YAML-Spec:
+# save_attachment, move_message und mark_read. Sie verlangen jeweils einen
+# tool-genauen Scope; die fünf YAML-Werkzeuge und Fassung 2.0.2 bleiben gleich.
+# move_message gibt die aktuelle ID als message_id zurück. Nur ein Ordnerwechsel
+# ändert die ID; im selben Ordner bleibt sie gültig. Fehlt Graphs id, wird Erfolg
+# mit einem Hinweis auf list_messages gemeldet. Nur id wird aus der Graph-Antwort
+# projiziert. mark_read markiert gelesen, ohne Ordner oder ID zu ändern.
+# Betreiber-Anleitung: docs/connector-microsoft-graph-mail.md.
 
 name: microsoft-graph-mail
 # Fassung dieser Vorlage (Story #427) — siehe demo-erp.yaml für die Bedeutung.
 # 2.0.0 (#703): ZWEI NEUE WERKZEUGE sind eine Flächen-Änderung, und der
-# Flächen-Wächter (internal/connector/surface.go) weist eine PATCH-/MINOR-Anhebung
+# Flächen-Wächter (Produkt-Doku, nicht öffentlich) weist eine PATCH-/MINOR-Anhebung
 # dafür fail-closed ab.
 # 2.0.1: NUR die Beschreibung von read_attachment — es liest jetzt auch Word,
 # Excel und PowerPoint (docx/xlsx/pptx). Keine Flächen-Änderung, deshalb PATCH
