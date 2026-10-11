@@ -35,7 +35,7 @@ reviewed from outside without anyone touching the gateway.
 
 | Folder | Contents |
 |---|---|
-| [`connector-specs/`](connector-specs/) | The shipped REST specs, five of them, see the table below. |
+| [`connector-specs/`](connector-specs/) | The shipped REST specs, fifteen of them, see the table below. |
 | [`upstream-specs/`](upstream-specs/) | Example configuration for an **MCP upstream** (a third-party MCP server under our governance): `github.yaml`. |
 | [`docs/`](docs/) | The four format contracts, the build discipline and two operator guides. |
 | [`examples/`](examples/) | Attachments to the guides (today: the Exchange script for the single-mailbox limit). |
@@ -102,9 +102,24 @@ system and documented in the backlog.
 | [`demo-erp.yaml`](connector-specs/demo-erp.yaml) | 2, read-only | **Built, demo only.** A mock for the walkthrough: it talks to an invented ERP, not a real system. Needs the example ERP from the product repository. |
 | [`dokumente.yaml`](connector-specs/dokumente.yaml) | 4, read-only | **Built.** Verified live (20 September 2026): all four check stages green, search via `/mcp` with the expected hit, audit entry with redacted search term. Template: one knowledge area per integration. |
 | [`lexware-office.yaml`](connector-specs/lexware-office.yaml) | 6, of which 2 write | **Built.** Reading verified live. The two writing tools (upload document, attach document image) are built; **live evidence of the write path is pending**. |
-| [`microsoft-graph-mail.yaml`](connector-specs/microsoft-graph-mail.yaml) | 5, of which 1 writes | **Built.** Verified live (6/7 August 2026): reading with 200, a draft actually created, with the counter-check "nothing sent". **Single-mailbox limit verified (13 August 2026):** a second, existing mailbox answers with 403. No send tool, deliberately. |
-| [`microsoft-graph-sharepoint.yaml`](connector-specs/microsoft-graph-sharepoint.yaml) | 4, read-only | **Built.** Verified live on a real tenant (25 August 2026): 403 before the site grant, 200 after it. Metadata only, never file contents. |
+| [`microsoft-graph-mail.yaml`](connector-specs/microsoft-graph-mail.yaml) | 8 total: 5 YAML + 3 native, of which 4 write | **Built.** Verified live (6/7 August 2026): reading with 200, a draft actually created, with the counter-check "nothing sent". **Single-mailbox limit verified (13 August 2026):** a second, existing mailbox answers with 403. No send tool, deliberately. Native tools: `save_attachment`, `move_message`, `mark_read`; YAML stays at 2.0.2. |
+| [`microsoft-graph-sharepoint.yaml`](connector-specs/microsoft-graph-sharepoint.yaml) | 4, read-only | **Built.** Verified live on a real tenant (25 August 2026): 403 before the site grant, 200 after it. Metadata only, never file contents. Template 2.0.0 uses a site ID instance value; this new form has no live evidence yet. |
+| [`business-central.yaml`](connector-specs/business-central.yaml) (2.0.0) | 11, read-only | Built; live evidence pending. Online API v2.0, one company in one environment; tenant and company are instance values. |
+| [`hubspot.yaml`](connector-specs/hubspot.yaml) (1.0.0) | 8, read-only | Built; live evidence pending. Contacts, companies and deals; read-only searches via POST. |
+| [`jtl-wawi.yaml`](connector-specs/jtl-wawi.yaml) (1.0.0) | 10, read-only | Built; live evidence pending. On-premise API version 2.0; fixed request headers, no writing. |
+| [`microsoft-graph-calendar.yaml`](connector-specs/microsoft-graph-calendar.yaml) (1.0.0) | 3, read-only | Built; live evidence pending. One mailbox; no attendees or event text. |
+| [`odoo.yaml`](connector-specs/odoo.yaml) (3.1.0) | 15, of which 4 write | Built. Previous 3.0.0 tools verified live (30 September 2026); the 3.1.0 database instance value has no live evidence yet. Chatter requires a separate integration with an internal Odoo user. The contract model is an extension, not Odoo standard. |
+| [`openproject.yaml`](connector-specs/openproject.yaml) (1.0.0) | 7, read-only | Built; verified live against 17.8.0 (30 September 2026). Projects and work packages; no time entries or user lists. |
+| [`paperless.yaml`](connector-specs/paperless.yaml) (1.0.0) | 6, read-only | Built; verified live against 3.2.1 (30 September 2026). Metadata only; no OCR text, file content or download. |
+| [`shopware-admin.yaml`](connector-specs/shopware-admin.yaml) (1.0.0) | 6, read-only | Built; verified live against 6.7.14.2 (29 September 2026). Read-only ACL role; JSON response format and inherited variant names. |
+| [`woocommerce.yaml`](connector-specs/woocommerce.yaml) (1.0.0) | 7, read-only | Built; verified live against 11.1.2 (30 September 2026). Read key via Basic over HTTPS; fixed field lists. |
+| [`zammad.yaml`](connector-specs/zammad.yaml) (1.0.0) | 7, read-only | Built; verified live against 7.2.0 (30 September 2026). Metadata only; no articles or notes. The vendor token can write customer and organisation records; JanuaPort exposes only GET tools. |
 | [`upstream-specs/github.yaml`](upstream-specs/github.yaml) | allowlist | **Built.** Shipped since v0.2.0, read relay verified live. Example of the instance model: the same URL, different access tokens and allowlists. |
+
+Template versions are the product versions. The additional vendor setup guides remain
+product documentation (not public); format rules and vendor references are in the
+spec comments and [build discipline](docs/connector-treue.md). The live results above
+come from the product; this mirror sync was verified locally without vendor calls.
 
 Operator guides for the two Graph connectors are included
 ([mailbox](docs/connector-microsoft-graph-mail.md),
