@@ -1,0 +1,435 @@
+# JTL-Wawi REST API, On-Prem, api-version 2.0 — Artikel mit Bestand und
+# Einkaufsdaten, Lieferanten je Artikel, Bestandsänderungen, Aufträge mit
+# Positionen, Kunden, Lager und Lieferanten lesen. Kein Schreibwerkzeug.
+#
+# API: GET http://<wawi-server>:<port>/api/eazybusiness/<pfad>
+# Die Pfade tragen KEIN `/v2`: On-Prem wählt die Version über den
+# Header `api-version`, nur die Cloud trägt sie im Pfad (/erp/v2/).
+# Doku: JTL-Doku-MCP https://developer.jtl-software.com/mcp — geprüft 29.09.2026:
+# Referenz /openapi/openapi/erp/2.0.json (Pfade, Query-Namen,
+# Antwortfelder in JTL-Schreibweise wie `sKU`, `gTIN`), Guides
+# /cloud/guides/essentials/authentication/oauth2-flow (Tab
+# „OnPremise“: Basis-URL, Registrierung, Header-Satz),
+# …/common-patterns/versioning (api-version im Header),
+# …/authentication/scopes-permissions (Scopes, Durchsetzung erst ab
+# Wawi 2.2.0), …/common-patterns/error-handling (Fehler-Body).
+# Anleitung: (Produkt-Doku, nicht öffentlich) (Lizenz, API-Instanz im LAN,
+# App-Registrierung per curl, Key in den Vault, Firewall)
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE. Zwei Werte sind instanzspezifisch und stehen
+# hier als Platzhalter: der Host in `base_url` (`wawi-server.example.lan`, Port
+# 5883 ist der Default des JTL-Einrichtungsdialogs) und der Challenge-Code im
+# Header `x-challengecode` (`CHANGE-ME`). Vor dem Einsatz beide ersetzen — der
+# Challenge-Code ist derselbe Wert, mit dem die App registriert wurde. Der
+# API-KEY steht NIE hier, sondern nur im Vault unter dem Namen "jtl-wawi".
+#
+# ⚠️ ANHEBUNG (offen): Eine Anhebung auf eine neuere Vorlagen-Fassung
+# übernimmt `headers` aus der Vorlage. Der Challenge-Code einer laufenden
+# Instanz fiele dabei auf `CHANGE-ME` zurück, jeder Aufruf scheiterte. Nach
+# jeder Anhebung `x-challengecode` prüfen und neu setzen (Anleitung §7).
+#
+# ENVELOPE-ABGLEICH gegen den Guide „OnPremise Authentication“, Schritt 4:
+# * `Authorization: Wawi <API-Key>` — die Runtime setzt ihn aus `auth.template`.
+# * `api-version: 2.0` — Pflicht auf JEDEM Aufruf; fehlt er, fällt die API auf
+# die älteste Version zurück (v1.x, andere Pfade).
+# * `x-appid`, `x-appversion` — Name und Version der App aus der Registrierung.
+# * `x-challengecode` — der Wert aus der Registrierung (höchstens 30 Zeichen).
+# KEIN Secret: er bindet nur die zweistufige Registrierung, ohne Key nützt
+# er nichts. Deshalb darf er als konstanter Header in der Spec stehen.
+# * `x-runas` (im Auftrag eines Wawi-Benutzers) setzen wir bewusst NICHT.
+# * `Accept: application/json` setzt die Runtime ohnehin; `Host` setzt Go.
+#
+# FORMAT-REGELN DES SCHNITTS:
+# * Nur GET. Listen blättern mit `pageNumber` (aus dem Parameter `page`, ab 1)
+# und einem FESTEN `pageSize: 50` — der Agent kann den Deckel nicht anheben.
+# * Antwort-Hülle der Listen: totalItems/pageNumber/pageSize/items[]/
+# hasNextPage. Jede Projektion reicht totalItems, pageNumber und hasNextPage
+# durch und schneidet die Einträge auf eine feste Feldliste zu.
+# * Datumsfilter sind `date-time` (ISO 8601). Die genaue Form, die die Wawi
+# annimmt, ist live noch zu belegen (offene Frage 4).
+# * `sortBy` ist nicht angeboten — seine Werte sind in der Referenz nicht
+# aufgezählt (offene Frage 4).
+#
+# DATENSCHUTZ — warum Felder fehlen (Inhalts-Wächter im Spec-Test):
+# * Die Auftragsliste trägt flach die komplette Rechnungs- und Lieferadresse
+# (billingAddress…/shipmentAddress…, inklusive EmailAddress und
+# PhoneNumber) und die Namen der Bearbeiter (createdByUserName,
+# assignedUserName, cancellationUserName) — nichts davon wird projiziert.
+# * Die Kundenliste trägt Vor- und Nachname, Straße, PLZ, Ort, emailAddress,
+# phoneNumber, Mobilnummer und Geburtstag — projiziert werden nur Nummer,
+# Firmenname, Gruppe, Kategorie, Land, Sperre und Datumsangaben.
+# * Bestandsänderungen tragen `username` (wer gebucht hat) und einen freien
+# Kommentar — beides fehlt: keine personenbezogene Aktivitäts-Anzeige
+# (Produkt-Doku, nicht öffentlich). Ebenso `lastEditor` am Artikel.
+# * Freitexte (Notizen, Kundenkommentar, Positions-Notiz) fehlen überall.
+#
+# FEHLER: Der Fehler-Body der Wawi trägt `stacktrace` mit Server-Interna. Er
+# erreicht den Agenten nicht — die Runtime reicht im Werkzeug-Pfad nur Status
+# und eine feste Erklärung weiter ((Produkt-Doku, nicht öffentlich), Vertragstest
+# TestJTLWawiFehlerOhneStacktrace). 402 heißt: keine API-Lizenz, Lizenz nicht
+# synchronisiert oder die App ist nicht freigegeben (Anleitung §2).
+#
+# RATE LIMITS: Für On-Prem nicht dokumentiert. `min_interval: 250ms` ist eine
+# Selbstbremse (~4 Aufrufe/s) für den Wawi-Server des Kunden, keine Zusage.
+#
+# PRIVACY: bewusst KEIN `privacy:`-Block in der Vorlage. Firmenname und
+# Kundennummer können auf eine Person zeigen (Einzelunternehmer); ob sie
+# pseudonymisiert gehören, entscheidet der Betreiber. Vorlage zum Ergänzen an
+# `search_customers` und `list_sales_orders` (Format: docs/connector-spec.md,
+# Abschnitt Privacy):
+#
+# privacy:
+# read:
+# - {field: companyName, label: firma}
+# - {field: customerNumber, label: kundennummer}
+
+name: jtl-wawi
+# Fassung dieser Vorlage — siehe demo-erp.yaml für die Bedeutung.
+version: "1.0.0"
+description: >
+  JTL-Wawi (on-premises REST API, api-version 2.0), read-only: search items with
+  stock, incoming stock and purchase prices, stock per warehouse, stock changes,
+  suppliers per item, sales orders with their line items, customers, warehouses
+  and suppliers. Lists return at most 50 entries per call and page with page.
+# PLATZHALTER — durch die LAN-Adresse der eigenen Wawi-API-Instanz ersetzen
+# (Schnittstelle und Port aus dem Einrichtungsdialog, siehe Anleitung §3).
+base_url: http://wawi-server.example.lan:5883/api/eazybusiness
+
+auth:
+  header: Authorization
+  template: "Wawi {{credential}}"
+  # Vault-Name des API-Keys aus der Registrierung (jnpt credential set --name jtl-wawi).
+  credential: jtl-wawi
+
+headers:
+  api-version: "2.0"
+  x-appid: JanuaPort/1.0.0
+  x-appversion: "1.0.0"
+  # PLATZHALTER — durch den Challenge-Code der eigenen Registrierung ersetzen.
+  x-challengecode: CHANGE-ME
+
+timeout: 30s
+min_interval: 250ms
+
+# Ein Kunden-Suchtext ist oft ein Name — er erscheint im Audit nur redigiert.
+redact_params: [customer_query]
+
+tools:
+  - name: get_status
+    description: >
+      Health check: returns the JTL-Wawi version, the server time, the name of
+      the database tenant and the API type. Changes nothing. Use it first when
+      calls fail: HTTP 401 means the API key is wrong, HTTP 402 means the Wawi
+      has no (synchronised) API licence or the app registration is not
+      authorised, HTTP 403 means a scope is missing.
+    # Probe für `jnpt connector check` — parameterlos.
+    check: true
+    request:
+      method: GET
+      path: /info
+    response: "{version: version, timestamp: timestamp, tenant: tenant, type: type}"
+
+  - name: search_items
+    description: >
+      Searches items (articles). Returns per item: id, sKU (the item number),
+      name, gTIN, manufacturer, sales unit, active flag, net sales price, average
+      and last purchase price with the last purchase date, stock (total,
+      available, incoming from purchase orders, on the purchase list, in sales
+      orders, reserved), the minimum stock, the default supplier (id and name)
+      and the last modification time. search_term searches the Wawi's default
+      item search fields. modified_after returns only
+      items changed after that moment. At most 50 items per call; if
+      hasNextPage is true, call again with page + 1. Use the id as item_id in
+      get_item_stock, list_stock_changes and list_item_suppliers. Read-only.
+    params:
+      - name: search_term
+        description: Optional. Search text, e.g. an item number or part of the name.
+        type: string
+      - name: modified_after
+        description: >
+          Optional. Only items modified after this moment, ISO 8601 date-time,
+          e.g. 2026-09-01T00:00:00.
+        type: string
+      - name: page
+        description: Optional. Page number, starting at 1 (default 1).
+        type: integer
+    request:
+      method: GET
+      path: /items
+      query:
+        - name: searchTerm
+          value: "{search_term}"
+        - name: modifiedTimestampAfter
+          value: "{modified_after}"
+        - name: pageNumber
+          value: "{page}"
+        - name: pageSize
+          value: "50"
+    response: >-
+      {totalItems: totalItems, pageNumber: pageNumber, hasNextPage: hasNextPage,
+      items: items[].{id: id, sKU: sKU, name: name, gTIN: gTIN,
+      manufacturerName: manufacturerName, unit: unit, isActive: isActive,
+      salesPriceNet: salesPriceNet, averagePurchasePriceNet: averagePurchasePriceNet,
+      lastPurchasePrice: lastPurchasePrice, lastPurchaseDate: lastPurchaseDate,
+      stockTotal: stockTotal, stockAvailable: stockAvailable,
+      stockIncoming: stockIncoming, stockOnPurchaseList: stockOnPurchaseList,
+      stockInOrders: stockInOrders, stockReservedTotal: stockReservedTotal,
+      minimumStock: minimumStock, defaultSupplierId: defaultSupplierId,
+      defaultSupplier: defaultSupplier, modifiedTimestamp: modifiedTimestamp}}
+
+  - name: get_item_stock
+    description: >
+      Returns the stock of one item per warehouse and storage location: total
+      quantity, quantity locked for shipment, quantity locked for availability,
+      quantity on picking lists, and batch number and best-before date where the
+      item uses them. Map warehouseId to a name with list_warehouses. At most 50
+      rows per call; if hasNextPage is true, call again with page + 1. Read-only.
+    params:
+      - name: item_id
+        description: Required. The item id (a UUID) as returned by search_items.
+        type: string
+        required: true
+      - name: page
+        description: Optional. Page number, starting at 1 (default 1).
+        type: integer
+    request:
+      method: GET
+      path: /stocks
+      query:
+        - name: itemId
+          value: "{item_id}"
+        - name: pageNumber
+          value: "{page}"
+        - name: pageSize
+          value: "50"
+    response: >-
+      {totalItems: totalItems, pageNumber: pageNumber, hasNextPage: hasNextPage,
+      items: items[].{warehouseId: warehouseId, storageLocationId: storageLocationId,
+      storageLocationName: storageLocationName, itemId: itemId,
+      quantityTotal: quantityTotal, quantityLockedForShipment: quantityLockedForShipment,
+      quantityLockedForAvailability: quantityLockedForAvailability,
+      quantityInPickingLists: quantityInPickingLists, batchNumber: batchNumber,
+      shelfLifeExpirationDate: shelfLifeExpirationDate}}
+
+  - name: list_stock_changes
+    description: >
+      Lists stock movements from start_date until now: item id, warehouse,
+      storage location, the changed quantity (negative = outgoing), the date of
+      the change, and batch number and best-before date where used. Who booked
+      a movement is deliberately not returned. item_id narrows the list to one
+      item. At most 50 movements per call; if hasNextPage is true, call again
+      with page + 1. Read-only.
+    params:
+      - name: start_date
+        description: >
+          Required. Movements from this moment until now, ISO 8601 date-time,
+          e.g. 2026-09-01T00:00:00. Keep the range short.
+        type: string
+        required: true
+      - name: item_id
+        description: Optional. Only movements of this item (UUID from search_items).
+        type: string
+      - name: page
+        description: Optional. Page number, starting at 1 (default 1).
+        type: integer
+    request:
+      method: GET
+      path: /stocks/changes
+      query:
+        - name: startDate
+          value: "{start_date}"
+        - name: itemId
+          value: "{item_id}"
+        - name: pageNumber
+          value: "{page}"
+        - name: pageSize
+          value: "50"
+    response: >-
+      {totalItems: totalItems, pageNumber: pageNumber, hasNextPage: hasNextPage,
+      items: items[].{itemId: itemId, warehouseId: warehouseId,
+      storageLocationId: storageLocationId, quantity: quantity,
+      changedDate: changedDate, batchNumber: batchNumber,
+      shelfLifeExpirationDate: shelfLifeExpirationDate}}
+
+  - name: list_item_suppliers
+    description: >
+      Lists the suppliers of one item with the purchasing data: supplier id and
+      name, the supplier's item number and item name, net purchase price and
+      currency, whether it is the default supplier, minimum purchase quantity,
+      delivery time in days, average delivery time, the supplier's own stock
+      and when it was last updated, and the packaging unit quantity. At most 50
+      rows per call; if hasNextPage is true, call again with page + 1. Read-only.
+    params:
+      - name: item_id
+        description: Required. The item id (a UUID) as returned by search_items.
+        type: string
+        required: true
+      - name: page
+        description: Optional. Page number, starting at 1 (default 1).
+        type: integer
+    request:
+      method: GET
+      path: /items/{item_id}/suppliers
+      query:
+        - name: pageNumber
+          value: "{page}"
+        - name: pageSize
+          value: "50"
+    response: >-
+      {totalItems: totalItems, pageNumber: pageNumber, hasNextPage: hasNextPage,
+      items: items[].{id: id, itemId: itemId, supplierId: supplierId,
+      supplierName: supplierName, supplierItemNumber: supplierItemNumber,
+      supplierItemName: supplierItemName, netPurchasePrice: netPurchasePrice,
+      supplierCurrency: supplierCurrency, isDefaultSupplier: isDefaultSupplier,
+      minimumPurchaseQuantity: minimumPurchaseQuantity,
+      deliveryTimeInDays: deliveryTimeInDays, averageDeliveryTime: averageDeliveryTime,
+      stockLevel: stockLevel, stockLevelLastModified: stockLevelLastModified,
+      packageUnitQuantity: packageUnitQuantity}}
+
+  - name: list_sales_orders
+    description: >
+      Lists sales orders, optionally within an order date range. Returns per
+      order: id, salesOrderNumber, salesOrderDate, customer id, customer number
+      and company name, currency, net and gross total, amount still to pay,
+      payment status, delivery status, cancelled and pending flags, estimated
+      delivery date, last shipping date, sales channel, external order number
+      and invoice numbers. No addresses and no contact data. The only filters
+      are the two dates; there is no filter by customer. At most 50 orders per
+      call; if hasNextPage is true, call again with page + 1. Use the id as
+      sales_order_id in get_sales_order_lines. Read-only.
+    params:
+      - name: order_date_after
+        description: >
+          Optional. Only orders dated after this moment, ISO 8601 date-time,
+          e.g. 2026-09-01T00:00:00.
+        type: string
+      - name: order_date_before
+        description: >
+          Optional. Only orders dated before this moment, ISO 8601 date-time,
+          e.g. 2026-10-01T00:00:00.
+        type: string
+      - name: page
+        description: Optional. Page number, starting at 1 (default 1).
+        type: integer
+    request:
+      method: GET
+      path: /sales-orders
+      query:
+        - name: salesOrderDateAfter
+          value: "{order_date_after}"
+        - name: salesOrderDateBefore
+          value: "{order_date_before}"
+        - name: pageNumber
+          value: "{page}"
+        - name: pageSize
+          value: "50"
+    response: >-
+      {totalItems: totalItems, pageNumber: pageNumber, hasNextPage: hasNextPage,
+      items: items[].{id: id, salesOrderNumber: salesOrderNumber,
+      salesOrderDate: salesOrderDate, customerId: customerId,
+      customerNumber: customerNumber, companyName: companyName,
+      currencyIso: currencyIso, totalNetAmount: totalNetAmount,
+      totalGrossAmount: totalGrossAmount, stillToPay: stillToPay,
+      paymentStatus: paymentStatus, deliveryStatus: deliveryStatus,
+      isCancelled: isCancelled, isPending: isPending,
+      estimatedDeliveryDate: estimatedDeliveryDate, lastShippingDate: lastShippingDate,
+      salesChannelName: salesChannelName, externalSalesOrderNumber: externalSalesOrderNumber,
+      salesInvoiceNumbers: salesInvoiceNumbers}}
+
+  - name: get_sales_order_lines
+    description: >
+      Returns all line items of one sales order (not paged): id, item id, sKU,
+      name, type (0 = free text, 1 = item, 2 = shipping, 3 = coupon, 5 = payment,
+      10 = packing; other values are further surcharges and vouchers), quantity, quantity delivered and returned, sales unit, net and
+      gross sales price, discount, net purchase price and tax rate. Read-only.
+    params:
+      - name: sales_order_id
+        description: Required. The sales order id (a UUID) as returned by list_sales_orders.
+        type: string
+        required: true
+    request:
+      method: GET
+      path: /sales-orders/{sales_order_id}/line-items
+    response: >-
+      [].{id: id, salesOrderId: salesOrderId, itemId: itemId, sKU: sKU, name: name,
+      type: type, quantity: quantity, quantityDelivered: quantityDelivered,
+      quantityReturned: quantityReturned, salesUnit: salesUnit,
+      salesPriceNet: salesPriceNet, salesPriceGross: salesPriceGross,
+      discount: discount, purchasePriceNet: purchasePriceNet, taxRate: taxRate}
+
+  - name: search_customers
+    description: >
+      Searches customers. Returns per customer: id, customerNumber, company
+      name, customer group, customer category, country code, locked flag,
+      creation date and last change. No personal names, no addresses and no
+      contact data. customer_query searches the Wawi's default customer search
+      fields and matches from the start (e.g. a customer number or the start of
+      a company name). At most 50 customers per call; if hasNextPage is true,
+      call again with page + 1. Read-only.
+    params:
+      - name: customer_query
+        description: Optional. Search text, e.g. a customer number or the start of a company name.
+        type: string
+      - name: page
+        description: Optional. Page number, starting at 1 (default 1).
+        type: integer
+    request:
+      method: GET
+      path: /customers
+      query:
+        - name: searchTerm
+          value: "{customer_query}"
+        - name: pageNumber
+          value: "{page}"
+        - name: pageSize
+          value: "50"
+    response: >-
+      {totalItems: totalItems, pageNumber: pageNumber, hasNextPage: hasNextPage,
+      items: items[].{id: id, customerNumber: customerNumber, companyName: companyName,
+      customerGroupName: customerGroupName, customerCategoryName: customerCategoryName,
+      countryIso: countryIso, isLocked: isLocked, createdDate: createdDate,
+      lastChanged: lastChanged}}
+
+  - name: list_warehouses
+    description: >
+      Lists the warehouses: id, name and whether the warehouse is active. Use it
+      to name the warehouseId in get_item_stock and list_stock_changes. At most
+      50 warehouses per call; if hasNextPage is true, call again with page + 1.
+      Read-only.
+    params:
+      - name: page
+        description: Optional. Page number, starting at 1 (default 1).
+        type: integer
+    request:
+      method: GET
+      path: /warehouses
+      query:
+        - name: pageNumber
+          value: "{page}"
+        - name: pageSize
+          value: "50"
+    response: >-
+      {totalItems: totalItems, pageNumber: pageNumber, hasNextPage: hasNextPage,
+      items: items[].{id: id, name: name, active: active}}
+
+  - name: list_suppliers
+    description: >
+      Lists the suppliers: id, name, whether they can drop-ship and their
+      currency. For the suppliers of one item with prices use
+      list_item_suppliers. At most 50 suppliers per call; if hasNextPage is
+      true, call again with page + 1. Read-only.
+    params:
+      - name: page
+        description: Optional. Page number, starting at 1 (default 1).
+        type: integer
+    request:
+      method: GET
+      path: /suppliers
+      query:
+        - name: pageNumber
+          value: "{page}"
+        - name: pageSize
+          value: "50"
+    response: >-
+      {totalItems: totalItems, pageNumber: pageNumber, hasNextPage: hasNextPage,
+      items: items[].{id: id, name: name, canDropship: canDropship, currencyIso: currencyIso}}

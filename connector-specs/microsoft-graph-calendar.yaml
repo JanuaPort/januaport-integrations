@@ -1,0 +1,274 @@
+# Microsoft-365-Kalender eines Postfachs über Microsoft Graph v1.0.
+# Read-only: Kalender, Termine im Zeitfenster, ein Termin.
+# Kein Schreiben, keine Teilnehmer, kein Termintext.
+#
+# API: https://graph.microsoft.com
+# Doku: Kalender holen
+# https://learn.microsoft.com/en-us/graph/api/calendar-get?view=graph-rest-1.0
+# Termine im Zeitfenster (calendarView, Serien aufgelöst)
+# https://learn.microsoft.com/en-us/graph/api/user-list-calendarview?view=graph-rest-1.0
+# Einen Termin holen (inkl. Prefer: outlook.timezone)
+# https://learn.microsoft.com/en-us/graph/api/event-get?view=graph-rest-1.0
+# event-Ressource (Felder, sensitivity)
+# https://learn.microsoft.com/en-us/graph/api/resources/event?view=graph-rest-1.0
+# Postfach-Grenze: RBAC for Applications in Exchange Online
+# https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac
+# Berechtigungen (Calendars.Read, Calendars.ReadBasic.All)
+# https://learn.microsoft.com/en-us/graph/permissions-reference
+# App-only-Token (Client-Credentials)
+# https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow
+# Anleitung: (Produkt-Doku, nicht öffentlich) (App-Registrierung OHNE
+# API-Berechtigung, Exchange-RBAC auf ein Postfach, Credential in den
+# Vault); Beilage (Produkt-Doku, nicht öffentlich)
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE. Drei Werte sind mandantenspezifisch und
+# stehen hier als Platzhalter: `token_url` und `client_id` als Null-GUID sowie
+# das POSTFACH am Ende der `base_url` (`kalender@example.com`). Vor dem Einsatz
+# alle drei ersetzen; die Datei bleibt dabei einchecktauglich: das CLIENT
+# SECRET steht NIE hier, sondern nur im Vault unter "microsoft-graph-calendar".
+#
+# ⚠️ EINE INTEGRATION = EIN KALENDER. Das Postfach steht FEST im Pfad-Prefix der
+# `base_url` und ist nie ein Werkzeug-Parameter. Damit begrenzt
+# JanuaPort selbst auf diesen einen Kalender — als zweite Grenze neben Exchange
+# (s. u.). Die `base_url` bleibt bei einer Anhebung als Instanzwert erhalten.
+# Wer einen zweiten Kalender anbinden will, legt eine zweite Integration an.
+#
+# ⚠️ BERECHTIGUNG — EHRLICH. Die App-Registrierung bekommt in Entra KEINE
+# API-Berechtigung und keinen Admin-Consent. Das Recht kommt ausschließlich aus
+# Exchange Online: die Rolle `Application Calendars.Read` per RBAC for
+# Applications, zugewiesen mit einem `CustomResourceScope`, dessen
+# RecipientRestrictionFilter GENAU EIN Postfach trifft. Dasselbe Muster wie beim
+# Mail-Connector (live belegt). Entra- und Exchange-Rechte ADDIEREN sich —
+# ein zusätzlich in Entra zugestimmtes Calendars.Read machte die Grenze
+# wirkungslos. Schritt 4 der Anleitung, Beilage (Produkt-Doku, nicht öffentlich).
+#
+# `Application Calendars.Read` ist GRÖBER als die Werkzeugfläche: Das Recht
+# erlaubt auch `body` (den Termintext), `attendees`, `organizer` und die
+# Einwahl-Links. Microsoft kennt kein Recht „nur Zeiten und Betreff" für EIN
+# Postfach. Ausgeschlossen werden diese Felder deshalb NICHT per Recht, sondern
+# an drei Stellen in dieser Datei und im Test:
+# 1. kein `$select` fordert sie an,
+# 2. JEDE `response` ist eine explizite JMESPath-Whitelist — `$select` allein
+# reicht nicht, Graph setzt die `@odata.*`-Metafelder unabhängig davon
+#, und für Felder außerhalb des `$select` gibt es keine Zusage,
+# 3. ein Wächter-Test auf Feldebene (Produkt-Doku, nicht öffentlich)
+# und ein Projektions-Wächter gegen Fixtures, die diese Felder enthalten
+# (Produkt-Doku, nicht öffentlich).
+# NIE in `$select` oder Projektion: body, bodyPreview, attendees, organizer,
+# onlineMeeting, onlineMeetingUrl, joinUrl, location.address,
+# location.coordinates. Vom Ort geht allein `location.displayName` durch.
+#
+# WARUM NICHT `Calendars.ReadBasic.All`: Es ließe `body` zwar schon vom Recht her
+# weg, gilt aber MANDANTENWEIT — RBAC for Applications kennt nur
+# `Application Calendars.Read` und `…ReadWrite`, nicht ReadBasic, und die
+# Application Access Policy als zweiter Begrenzungsweg wird abgekündigt. Ein
+# Recht auf ALLE Kalender des Mandanten ist die schlechtere Wahl als ein
+# gröberes Recht auf EINEN.
+#
+# PRIVATE TERMINE: Ist `sensitivity` gleich `private`, ersetzt die Projektion
+# `subject` und `location` durch "(private)". Zeit, Status (`showAs`) und Art
+# bleiben — der Slot ist belegt, das ist die Auskunft. Ob Graph app-only den
+# Betreff eines privaten Termins überhaupt im Klartext liefert, belegt erst der
+# Live-Lauf ; die Maskierung gilt in beiden Fällen.
+#
+# ENVELOPE-ABGLEICH gegen die Graph-Doku (Header heute in der Spec):
+# * `Authorization: Bearer <token>` — Doku-Pflicht; die Runtime setzt ihn aus
+# `auth.template`, der Token kommt app-only aus (Produkt-Doku, nicht öffentlich).
+# * `Accept: application/json` — statisch deklariert (die Runtime setzt ihn
+# ohnehin); Graph antwortet JSON.
+# * `Prefer: outlook.timezone="W. Europe Standard Time"` — statisch für alle
+# Werkzeuge: `start`/`end` der ANTWORT kommen in deutscher Zeit statt UTC.
+# ⚠️ Laut Doku wirkt der Header NICHT auf die Abfrage: `startDateTime`/
+# `endDateTime` richten sich nach dem Offset im Wert, ohne Offset gilt UTC.
+# Das steht deshalb in der Beschreibung von list_events.
+# * Kein `Content-Type`/`Content-Length` — alle Werkzeuge sind GET ohne Body.
+#
+# RATE LIMITS: Graph drosselt je App und Postfach mit 429 + `Retry-After`.
+# `min_interval: 200ms` ist dieselbe konservative Selbstbremse wie beim
+# Mail-Connector; JanuaPort wiederholt nicht automatisch.
+#
+# BEWUSST NICHT DRIN: kein Schreibwerkzeug · kein
+# `getSchedule` (fragt beliebige Adressen ab, ginge über die Ein-Postfach-Grenze
+# hinaus und ergäbe eine Verfügbarkeitsübersicht über Personen) · kein
+# `findMeetingTimes` (laut Doku app-only nicht unterstützt) · kein Listing über
+# `/events` (liefert Serien nur als Master, nicht aufgelöst — calendarView ist
+# der richtige Weg) · kein Mehrkalender (`/calendars`, v2) · kein Auto-Paging ·
+# kein `privacy:`-Block und kein `redact_params` (wie Mail und SharePoint; die
+# Parameter sind Zeitpunkte, Zahlen und Kennungen).
+
+name: microsoft-graph-calendar
+# Fassung dieser Vorlage — siehe demo-erp.yaml für die Bedeutung.
+version: "1.0.0"
+description: >
+  Microsoft 365 calendar of ONE mailbox via Microsoft Graph: read the calendar,
+  the events in a time window and a single event. Read-only and app-only; no
+  attendees, no event text, no meeting links.
+# PLATZHALTER (Postfach) — durch die SMTP-Adresse des EINEN Kalender-Postfachs
+# ersetzen. Das `@` bleibt so stehen; die Runtime übernimmt den Pfad-Prefix
+# unverändert (Vertragstest TestKalenderBaseURLPostfachBleibtImPfad).
+base_url: https://graph.microsoft.com/v1.0/users/kalender@example.com
+
+auth:
+  # App-only (Client-Credentials), wie Mail und SharePoint.
+  type: oauth2_client_credentials
+  header: Authorization
+  template: "Bearer {{credential}}"
+  # Vault-Name des CLIENT SECRET (jnpt credential set --name microsoft-graph-calendar).
+  # EIGENES Credential und eigene App: ein Secret, das Postfach UND Kalender
+  # kann, widerspräche der Least-Privilege-Linie.
+  credential: microsoft-graph-calendar
+  # PLATZHALTER — durch die eigene Mandanten-ID ersetzen.
+  token_url: https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/oauth2/v2.0/token
+  # PLATZHALTER — durch die Anwendungs-(Client-)ID der App-Registrierung ersetzen.
+  client_id: "00000000-0000-0000-0000-000000000000"
+  #.default fordert genau das an, was dem Dienstprinzipal zugewiesen ist — hier
+  # allein die Exchange-Rolle, keine Entra-Berechtigung.
+  scopes: ["https://graph.microsoft.com/.default"]
+
+timeout: 30s
+min_interval: 200ms
+
+headers:
+  Accept: application/json
+  Prefer: 'outlook.timezone="W. Europe Standard Time"'
+
+tools:
+  - name: get_calendar
+    description: >
+      Returns the ONE calendar this integration is bound to: id, name and
+      isDefaultCalendar. The mailbox is fixed in the connector configuration —
+      there is no parameter for it, and no other calendar of the tenant can be
+      reached through this integration.
+      It is also the probe call of the operator's connector check. An HTTP 403
+      here does NOT mean a broken credential — it means Exchange has not (yet)
+      released this mailbox for this application; changes take 30 minutes to
+      2 hours to apply.
+    # Probe-Aufruf für `jnpt connector check` und `selftest` — parameterlos,
+    # weil das Postfach fest in der base_url steht.
+    check: true
+    request:
+      method: GET
+      path: /calendar
+      query:
+        # `owner` (Name und Adresse der Person) bewusst nicht.
+        - name: "$select"
+          value: "id,name,isDefaultCalendar"
+    response: "{id: id, name: name, isDefaultCalendar: isDefaultCalendar}"
+
+  - name: list_events
+    description: >
+      Lists the events of the calendar that fall into a time window, with
+      recurring series EXPANDED into their single occurrences, sorted by start
+      time. Returns per event: id (pass it to get_event), subject, start and
+      end (each with dateTime and timeZone), isAllDay, showAs (free, tentative,
+      busy, oof, workingElsewhere), location (the display name only),
+      isCancelled, type (singleInstance, occurrence, exception, seriesMaster),
+      seriesMasterId, sensitivity and webLink (opens the event in Outlook on
+      the web). Plus next_link.
+      TIME ZONES — read this before you set start and end: the times in the
+      RESPONSE come in German local time (timeZone "W. Europe Standard Time",
+      daylight saving included; dateTime carries no offset). The window you
+      ASK for does not follow that: start and end are read by their own
+      offset. Always give an offset such as +02:00 (German summer time) or
+      +01:00 (winter time), or Z for UTC — a value WITHOUT offset is taken as
+      UTC and shifts your window by one or two hours.
+      PRIVATE EVENTS: an event marked private (sensitivity "private") comes
+      with subject and location replaced by "(private)". Its time and showAs
+      are real — the slot is taken. Do not guess what it is.
+      There are no attendees, no organizer, no event text and no meeting link
+      in this connector — deliberately. Use webLink to send a human to the
+      event.
+      PAGING is manual: top sets the page size, skip moves on. If next_link is
+      not null, there are more events in the window — call again with skip
+      increased by top, or narrow the window. This tool never follows the link
+      by itself.
+    params:
+      - name: start
+        description: >
+          Required. Start of the time window, ISO 8601 WITH offset, e.g.
+          "2026-10-05T00:00:00+02:00" or "2026-10-04T22:00:00Z". Without an
+          offset the value counts as UTC.
+        type: string
+        required: true
+      - name: end
+        description: >
+          Required. End of the time window, ISO 8601 WITH offset, e.g.
+          "2026-10-06T00:00:00+02:00". Keep windows short (a day to a few
+          weeks); a long window of a busy calendar needs many pages.
+        type: string
+        required: true
+      - name: top
+        description: >
+          Optional. Page size; Graph's default is 10. Keep it moderate (25 to
+          50) — a very large response is refused by JanuaPort (1 MiB limit).
+        type: integer
+      - name: skip
+        description: >
+          Optional. Number of events to skip, for the next page: the previous
+          skip plus top.
+        type: integer
+    request:
+      method: GET
+      path: /calendarView
+      query:
+        - name: startDateTime
+          value: "{start}"
+        - name: endDateTime
+          value: "{end}"
+        # Fester $select: genau die Felder, die der Werkzeugtext nennt. body,
+        # bodyPreview, attendees, organizer und onlineMeeting stehen bewusst
+        # NICHT hier (s. Kopf).
+        - name: "$select"
+          value: "id,subject,start,end,isAllDay,showAs,location,isCancelled,type,seriesMasterId,sensitivity,webLink"
+        - name: "$orderby"
+          value: "start/dateTime"
+        - name: "$top"
+          value: "{top}"
+        - name: "$skip"
+          value: "{skip}"
+    # Whitelist je Termin. `location` wird auf den Anzeigenamen verengt
+    # (address/coordinates fallen weg), und bei sensitivity == private werden
+    # Betreff und Ort maskiert. `&&`/`||` in JMESPath: `false || x` ergibt x,
+    # und `true && '(private)'` ergibt den (als nicht-leerer Text wahren)
+    # Maskentext — belegt in den Goldens list_events_fenster/get_event_privat.
+    response: >-
+      {events: value[*].{id: id,
+      subject: (sensitivity=='private' && '(private)') || subject,
+      start: start, end: end, isAllDay: isAllDay, showAs: showAs,
+      location: (sensitivity=='private' && '(private)') || location.displayName,
+      isCancelled: isCancelled, type: type, seriesMasterId: seriesMasterId,
+      sensitivity: sensitivity, webLink: webLink},
+      next_link: "@odata.nextLink"}
+
+  - name: get_event
+    description: >
+      Returns ONE event by its id (as returned by list_events): the same fields
+      as list_events plus categories, recurrence (the pattern and range of a
+      series, null for a single event) and isOnlineMeeting (true or false only
+      — the meeting link itself is never returned). Times come in German local
+      time (timeZone "W. Europe Standard Time").
+      A private event comes with subject and location replaced by "(private)".
+      There are no attendees, no organizer and no event text — deliberately.
+    params:
+      - name: event_id
+        description: >
+          Required. The event id from list_events. Pass it exactly as it came
+          back, including any "=", "-" or "_" characters — JanuaPort encodes it
+          for the URL itself. For an occurrence of a series this is the id of
+          that occurrence; seriesMasterId leads to the series itself.
+        type: string
+        required: true
+    request:
+      method: GET
+      path: /events/{event_id}
+      query:
+        - name: "$select"
+          value: "id,subject,start,end,isAllDay,showAs,location,isCancelled,type,seriesMasterId,sensitivity,webLink,categories,recurrence,isOnlineMeeting"
+    response: >-
+      {id: id,
+      subject: (sensitivity=='private' && '(private)') || subject,
+      start: start, end: end, isAllDay: isAllDay, showAs: showAs,
+      location: (sensitivity=='private' && '(private)') || location.displayName,
+      isCancelled: isCancelled, type: type, seriesMasterId: seriesMasterId,
+      sensitivity: sensitivity, webLink: webLink, categories: categories,
+      recurrence: recurrence, isOnlineMeeting: isOnlineMeeting}

@@ -1,0 +1,304 @@
+# Zammad REST API — Ticket- und Kunden-Metadaten lesen.
+# Nur lesend, keine Artikel und keine Notizen; gegen Zammad 7.2 geprüft.
+#
+# API: GET /api/v1/…, JSON; Token-Zugang „Authorization: Token token=<Token>"
+# Doku: https://docs.zammad.org/en/latest/api/intro.html (Auth, expand,
+# Paginierung per page/per_page), …/api/ticket/index.html,
+# …/api/user.html, …/api/organization.html, …/api/ticket/states.html
+# (Quelltext: github.com/zammad/zammad-documentation)
+# Quelltext: github.com/zammad/zammad, Tag 7.2.0 — geprüft 30.09.2026:
+# app/controllers/application_controller/renders_models.rb
+# (model_search_render: max 200 je Seite, mit expand ein ARRAY),
+# app/controllers/concerns/can_paginate/pagination.rb (page ab 1),
+# app/models/user/search.rb (permissions → Rollen-Filter),
+# app/models/token/permissions.rb (Token-Rechte = Schnittmenge)
+# Anleitung: (Produkt-Doku, nicht öffentlich) (Bot-Nutzer, Rolle, Gruppenrecht Read,
+# Token mit Ablauf, Credential in den Vault, Docker-Netz)
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE. Der Host in `base_url` ist ein Platzhalter.
+# Der TOKEN steht NIE hier, sondern nur im Vault unter dem Namen "zammad".
+#
+# ⚠️ READ-ONLY ERZWINGT JANUAPORT, NICHT ZAMMAD. Zammad kennt kein reines
+# Leserecht: Um fremde Tickets zu lesen, braucht der Bot `ticket.agent`. Mit
+# Gruppenrecht nur „read" und einem Token mit den Rechten ["ticket.agent"]
+# sperrt Zammad Anlegen, Ändern, Löschen, Artikel und Tags an Tickets (403,
+# live belegt). `ticket.agent` darf aber Kunden und Organisationen anlegen und
+# ändern, unabhängig vom Gruppenrecht (live belegt: 201 / 200). Diese Vorlage
+# hat deshalb nur GET-Werkzeuge; der Token liegt nur im Vault. Ein geleakter
+# Token könnte Kunden- und Organisationsdaten ändern — das Risiko steht offen
+# in (Produkt-Doku, nicht öffentlich) und im Katalog.
+#
+# DATENSCHUTZ (v1 = nur Metadaten, (Produkt-Doku, nicht öffentlich)):
+# * Keine Artikel, auch keine internen Notizen: Artikel sind rohe
+# Kunden-Mails (Leitplanke 5), Notizen tragen Zitate und über `created_by`
+# eine Aktivitätsspur je Agent (Leitplanke 1). Präzedenz Odoo B.
+# * Jede Antwort ist eine feste Positivliste. Nie projiziert: body, note,
+# last_login, login_failed, out_of_office*, preferences, created_by(_id),
+# updated_by(_id), last_contact_agent_at, owner(_id), members, time_unit.
+# * Grenze der Suche: Zammads Suchsyntax (Elasticsearch) erreicht auch
+# Artikel-Inhalte, interne Notizen und `owner.*`. Ja/Nein-Fragen an Inhalte
+# und Filter nach Bearbeiter bleiben damit möglich — die Positivliste
+# schützt die ANTWORT, nicht die Frage (Leitplanke 5: kein Schutz gegen
+# einen Agenten, der Eingaben wählt). Diese Integration ist nicht gedacht
+# für Auswertungen je Person.
+# * `redact_params: [query]` — der Suchbegriff erscheint im Audit nur als
+# [REDACTED].
+#
+# FORMAT-REGELN DES SCHNITTS:
+# * Alle Werkzeuge GET, konstanter Pfad; IDs nur als Ganzzahl im Pfad.
+# * `expand=true` immer (Namen statt nur IDs; die Suche antwortet dann mit
+# einem Array). `per_page=50` bei Suchen fest — der Agent blättert über
+# `page` (ab 1), er hebt den Deckel nicht an.
+# * Keine `condition[...]`-Filter (fehlende Werte ergäben halbe Filter), kein
+# GET /api/v1/tickets, kein ticket_articles / ticket_history.
+# * Sortieren nur nach enum-Feldern — kein Sortieren nach Bearbeiter.
+#
+# RATE LIMITS: Zammad dokumentiert keine festen Grenzen für selbst gehostete
+# Instanzen. `min_interval: 200ms` ist eine Selbstbremse (~5 Aufrufe/s).
+#
+# PRIVACY: bewusst KEIN `privacy:`-Block in der Vorlage — welche Felder
+# pseudonymisiert gehören, entscheidet der Betreiber. Vorlage zum Ergänzen
+# (Format: docs/connector-spec.md, Abschnitt Privacy). Der Ticket-Titel ist bei
+# Mail-Tickets der Betreff, also ein kleiner roher Eingang → `scan`:
+#
+# search_tickets / get_ticket:
+# privacy:
+# scan:
+# - {field: title, patterns: [email, telefon, iban]}
+# search_customers / get_customer:
+# privacy:
+# read:
+# - {field: firstname, label: name}
+# - {field: lastname, label: name}
+# - {field: email, label: email}
+# - {field: phone, label: telefon}
+# - {field: mobile, label: telefon}
+#
+# `customer` am Ticket ist der Login des Kunden — oft seine E-Mail-Adresse;
+# bei Bedarf dort ebenfalls `read` mit Label email.
+
+name: zammad
+# Fassung dieser Vorlage — siehe demo-erp.yaml für die Bedeutung.
+version: "1.0.0"
+description: >
+  Zammad helpdesk, read-only: search tickets with Zammad's search syntax, read a
+  ticket's metadata (state, priority, group, customer, organization, dates),
+  search customers and organizations, list ticket states. No article texts, no
+  internal notes, no agent activity. Searches return at most 50 records per
+  page and page with page.
+# PLATZHALTER — durch die eigene Zammad-Adresse ersetzen (https://…; im selben
+# Docker-Netz auch http://<dienstname>:8080, siehe Anleitung).
+base_url: https://zammad.example.com
+
+auth:
+  header: Authorization
+  template: "Token token={{credential}}"
+  # Vault-Name des API-Tokens des Bot-Nutzers (jnpt credential set --name zammad).
+  credential: zammad
+
+timeout: 30s
+min_interval: 200ms
+
+redact_params: [query]
+
+tools:
+  - name: check
+    description: >
+      Health check: returns id, login, roles and group rights of the Zammad bot
+      user this integration runs as. Changes nothing. The group rights should
+      read "read" only. HTTP 401 means the token is wrong or expired, HTTP 403
+      means the token lacks the ticket.agent permission.
+    check: true
+    request:
+      method: GET
+      path: /api/v1/users/me
+      query:
+        - name: expand
+          value: "true"
+    response: "{id: id, login: login, roles: roles, group_ids: group_ids, groups: groups}"
+
+  - name: search_tickets
+    description: >
+      Searches tickets with Zammad's search syntax and returns per ticket its
+      metadata: id, number, title, state, state_id, priority, group,
+      organization(_id), customer (the customer's login, often the e-mail
+      address) and customer_id, article_count, created_at, updated_at,
+      close_at, pending_time, escalation_at. No article texts, no notes, no
+      agent. Syntax examples: `state.name:new`, `state.name:open AND
+      organization.name:"Beispiel GmbH"`, `number:88003`,
+      `created_at:[2026-09-01 TO 2026-09-30]`, `customer.email:erika@example.com`,
+      free text like `printer`. State names are instance-specific — take them
+      from list_ticket_states. At most 50 tickets per call; if exactly 50 come
+      back, fetch the next page with page=2, 3, …. Use get_ticket for a single
+      ticket by id. Zammad answers a malformed query with an empty list, not
+      an error — an empty result can also mean the query was not understood;
+      simplify it before concluding there are no tickets.
+    params:
+      - name: query
+        description: >
+          Required. Zammad search query, e.g. state.name:new or
+          organization.name:"Beispiel GmbH" AND state.name:open. Use * for all
+          tickets.
+        type: string
+        required: true
+      - name: page
+        description: Optional. Page number, starting at 1 (default 1). 50 tickets per page.
+        type: integer
+      - name: sort_by
+        description: Optional. Sort field — one of created_at, updated_at, close_at, number.
+        type: string
+        enum: [created_at, updated_at, close_at, number]
+      - name: order_by
+        description: Optional. Sort direction — asc or desc.
+        type: string
+        enum: [asc, desc]
+    request:
+      method: GET
+      path: /api/v1/tickets/search
+      query:
+        - name: query
+          value: "{query}"
+        - name: expand
+          value: "true"
+        - name: per_page
+          value: "50"
+        - name: page
+          value: "{page}"
+        - name: sort_by
+          value: "{sort_by}"
+        - name: order_by
+          value: "{order_by}"
+    response: >-
+      [*].{id: id, number: number, title: title, state: state, state_id: state_id,
+      priority: priority, group: group, organization: organization,
+      organization_id: organization_id, customer: customer, customer_id: customer_id,
+      article_count: article_count, created_at: created_at, updated_at: updated_at,
+      close_at: close_at, pending_time: pending_time, escalation_at: escalation_at}
+
+  - name: get_ticket
+    description: >
+      Reads the metadata of ONE ticket by its id (the numeric id from
+      search_tickets, not the ticket number): number, title, state, priority,
+      group, organization, customer, article_count and the dates. No article
+      texts, no notes, no agent.
+    params:
+      - name: ticket_id
+        description: Required. Numeric ticket id (field id from search_tickets).
+        type: integer
+        required: true
+    request:
+      method: GET
+      path: /api/v1/tickets/{ticket_id}
+      query:
+        - name: expand
+          value: "true"
+    response: >-
+      {id: id, number: number, title: title, state: state, state_id: state_id,
+      priority: priority, group: group, organization: organization,
+      organization_id: organization_id, customer: customer, customer_id: customer_id,
+      article_count: article_count, created_at: created_at, updated_at: updated_at,
+      close_at: close_at, pending_time: pending_time, escalation_at: escalation_at}
+
+  - name: search_customers
+    description: >
+      Searches customers (users with the customer role) by name, e-mail,
+      phone or organization, e.g. `Musterfrau`, `email:erika@example.com`,
+      `organization.name:"Beispiel GmbH"`. Returns per customer: id, firstname,
+      lastname, email, phone, mobile, organization(_id), active, vip,
+      created_at, updated_at. At most 50 per call; next page with page=2, 3, ….
+    params:
+      - name: query
+        description: Required. Search term in Zammad search syntax; * for all customers.
+        type: string
+        required: true
+      - name: page
+        description: Optional. Page number, starting at 1 (default 1). 50 customers per page.
+        type: integer
+    request:
+      method: GET
+      path: /api/v1/users/search
+      query:
+        - name: query
+          value: "{query}"
+        # Nur Nutzer mit Kundenrolle — Agenten und Admins tauchen nicht auf
+        # (live belegt; Zammad wandelt das in einen Rollen-Filter, user/search.rb).
+        - name: permissions
+          value: ticket.customer
+        - name: expand
+          value: "true"
+        - name: per_page
+          value: "50"
+        - name: page
+          value: "{page}"
+    response: >-
+      [*].{id: id, firstname: firstname, lastname: lastname, email: email,
+      phone: phone, mobile: mobile, organization: organization,
+      organization_id: organization_id, active: active, vip: vip,
+      created_at: created_at, updated_at: updated_at}
+
+  - name: get_customer
+    description: >
+      Reads ONE customer by id (customer_id from a ticket or id from
+      search_customers): firstname, lastname, email, phone, mobile,
+      organization, active, vip and the dates. Reads any user by id, including
+      agents; use search_customers to find customers.
+    params:
+      - name: user_id
+        description: Required. Numeric user id (customer_id of a ticket, id from search_customers).
+        type: integer
+        required: true
+    request:
+      method: GET
+      path: /api/v1/users/{user_id}
+      query:
+        - name: expand
+          value: "true"
+    response: >-
+      {id: id, firstname: firstname, lastname: lastname, email: email,
+      phone: phone, mobile: mobile, organization: organization,
+      organization_id: organization_id, active: active, vip: vip,
+      created_at: created_at, updated_at: updated_at}
+
+  - name: search_organizations
+    description: >
+      Searches organizations by name or domain, e.g. `Beispiel` or
+      `name:"Beispiel GmbH"`. Returns per organization: id, name, shared,
+      domain, active, vip, created_at, updated_at — no members, no notes. At
+      most 50 per call; next page with page=2, 3, ….
+    params:
+      - name: query
+        description: Required. Search term in Zammad search syntax; * for all organizations.
+        type: string
+        required: true
+      - name: page
+        description: Optional. Page number, starting at 1 (default 1). 50 organizations per page.
+        type: integer
+    request:
+      method: GET
+      path: /api/v1/organizations/search
+      query:
+        - name: query
+          value: "{query}"
+        - name: expand
+          value: "true"
+        - name: per_page
+          value: "50"
+        - name: page
+          value: "{page}"
+    response: >-
+      [*].{id: id, name: name, shared: shared, domain: domain, active: active,
+      vip: vip, created_at: created_at, updated_at: updated_at}
+
+  - name: list_ticket_states
+    description: >
+      Lists the ticket states of this Zammad instance (id, name, state_type,
+      active). State names are instance-specific; use them in search_tickets
+      as state.name:<name> (quote names with spaces, e.g.
+      state.name:"pending reminder").
+    request:
+      method: GET
+      path: /api/v1/ticket_states
+      query:
+        - name: expand
+          value: "true"
+    response: "[*].{id: id, name: name, state_type: state_type, active: active}"

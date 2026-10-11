@@ -1,0 +1,286 @@
+# OpenProject über die API v3 — Projekte, Arbeitspakete, Versionen und Status
+# lesen. Sieben GET-Werkzeuge; Mindestversion OpenProject 17.
+#
+# API: REST + HAL+JSON unter /api/v3
+# Doku: https://www.openproject.org/docs/api/
+# (OpenAPI-Quelltext: github.com/opf/openproject, Zweig dev,
+# docs/api/apiv3/paths/*.yml — geprüft 30.09.2026 gegen v17.8)
+# Pfade: user.yml (/api/v3/users/me), projects.yml,
+# work_packages.yml, workspace_work_packages.yml, work_package.yml,
+# workspace_versions.yml, statuses.yml
+# Anleitung: (Produkt-Doku, nicht öffentlich) (Bot-Nutzer, Rolle, Non-member-
+# Fallstrick, API-Token, Credential in den Vault, Docker-Netz)
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE. Der Host in `base_url` ist ein Platzhalter —
+# vor dem Einsatz durch die eigene OpenProject-Adresse ersetzen. Der API-TOKEN
+# steht NIE hier, sondern nur im Vault unter dem Namen "openproject".
+#
+# RECHTE: Der Bot ist ein eigener Nutzer (kein Admin) mit einer Rolle, die
+# NUR `view_work_packages` trägt — kein view_time_entries, view_members,
+# view_user_email, view_internal_comments, kein *_edit/add/log_time. Die
+# Rechte gelten je Projekt über die Mitgliedschaft.
+# ⚠️ Non-member-Fallstrick: In einem ÖFFENTLICHEN Projekt erbt jeder
+# angemeldete Nutzer — auch der Bot — die Rechte der Rolle „Non-member".
+# Projekte deshalb nicht-öffentlich stellen oder die Non-member-Rolle
+# beschneiden (Anleitung, Abschnitt Rolle).
+#
+# AUTH: `Authorization: Bearer <API-Token>` (OpenProject 17, Token-Präfix
+# `opapi-`). Rückfallweg Basic `apikey:<token>` steht in der Anleitung — er
+# braucht keine andere Spec, nur einen anderen Vault-Wert und
+# `template: "Basic {{credential}}"`.
+#
+# FORMAT-REGELN DES SCHNITTS:
+# * Blättern: `offset` ist in OpenProject die SEITENNUMMER ab 1, nicht die
+# Zahl übersprungener Einträge. `pageSize` ist fest 50 — die Antwort bleibt
+# so unter dem 1-MiB-Deckel der Runtime (Live-Beleg in der Anleitung).
+# * Sortierung fest (`sortBy`): eindeutiger Schlüssel id, damit Seiten beim
+# Blättern stabil bleiben. Keine Sortierung nach Personen.
+# * Filter: NUR `state` mit drei festen JSON-Werten als enum (offen,
+# geschlossen, alle). Die `{…}` stehen im enum-WERT, die Vorlage ist nur
+# "{state}" — ein `{` in der Vorlage wäre ein Platzhalter, und ein frei
+# verketteter Text wäre einschleusbar. Die Runtime lässt nur exakt diese
+# drei Werte durch. Fehlt `state`, entfällt `filters` ganz, und
+# OpenProject nimmt seinen Default (offene Arbeitspakete).
+# * Keine Freitextsuche, kein Filter nach ID, keine Saved Queries in v1 —
+# dafür braucht es eine eigene Go-Story (Wertebaum für Query-JSON).
+#
+# LIVE-BEFUNDE (OpenProject 17.8.0, lokal im Docker, 30.09.2026):
+# * /users/me rendert `admin` für einen Nicht-Admin GAR NICHT. Die Probe
+# projiziert deshalb `admin == true` — ein fehlendes Feld wird zu false,
+# ein Admin-Token fällt als true auf.
+# * `_links.version` ist veraltet und fehlt, sobald Mehrfach-Versionen aktiv
+# sind (Default in 17.8); die Versionen stehen in `_links.targetVersions`.
+# * Meilensteine haben `date` statt startDate/dueDate.
+# * `Accept: application/json` wird angenommen (Antwort ist
+# application/hal+json) — kein eigener Accept-Header nötig.
+#
+# DATENSCHUTZ (Leitplanke 1): keine Zeitbuchungen (time_entries), kein
+# Änderungsjournal (activities), keine Nutzer-/Mitgliederlisten (users,
+# principals, memberships), keine Benachrichtigungen. Sie beantworten „wer hat
+# wann woran gearbeitet". Odoo `search_timesheets` ist mit dem
+# Schreibfall `log_hours` begründet und KEIN Präzedenzfall für Zeitbuchungen in
+# Lese-Konnektoren. Personen erscheinen nur als Anzeigename am Arbeitspaket:
+# `assignee` in Listen, `author`/`responsible` nur im Einzelabruf.
+# `description` (nur `.raw`, nie `html`) nur in get_work_package.
+#
+# redact_params bleibt LEER: Kein Parameter trägt Personendaten (IDs, Seite,
+# fester Filter). Kommt später ein Freitext-Parameter `q`, wird er hier
+# Pflichteintrag.
+#
+# PRIVACY: bewusst KEIN wirksamer `privacy:`-Block. Die Beschreibung ist
+# interner Arbeitstext; ob sie gescannt wird, entscheidet der Betreiber.
+# Vorlage zum Ergänzen an get_work_package (Format: docs/connector-spec.md,
+# Abschnitt Privacy). Namen im Freitext erfasst kein Muster.
+#
+# privacy:
+# scan:
+# - { field: description, patterns: [iban, email, telefon] }
+#
+# RATE LIMITS: Die API-Doku nennt keine. `min_interval: 200ms` ist eine
+# Selbstbremse für eine selbst gehostete Instanz, keine Zusage.
+
+name: openproject
+# Fassung dieser Vorlage — siehe demo-erp.yaml für die Bedeutung.
+version: "1.0.0"
+description: >
+  OpenProject (API v3, version 17 or later): read projects, work packages,
+  versions and statuses. Read-only. No time entries, no activity journal, no
+  user lists. Work package lists return 50 per page.
+# PLATZHALTER — durch die eigene OpenProject-Adresse ersetzen (https://…; im
+# selben Docker-Netz auch http://<dienstname>, siehe Anleitung).
+base_url: https://openproject.example.com
+
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  # Vault-Name des API-Tokens des Bot-Nutzers (jnpt credential set --name openproject).
+  credential: openproject
+
+timeout: 30s
+min_interval: 200ms
+
+# Leer mit Absicht — siehe Kopfkommentar (kommt `q`, wird es Pflicht).
+redact_params: []
+
+tools:
+  - name: check
+    description: >
+      Health check: returns id, name and the admin flag of the OpenProject bot
+      user this integration runs as. admin must be false. Changes nothing.
+      HTTP 401 means the API token is wrong or revoked.
+    check: true
+    request:
+      method: GET
+      path: /api/v3/users/me
+    response: "{id: id, name: name, admin: admin == `true`}"
+
+  - name: list_projects
+    description: >
+      Lists the projects (and, since OpenProject 17, programs and portfolios)
+      the bot may see, 50 per page, ordered by id. Returns total, page and per
+      project: id, identifier, name, workspace_type, active, public and the
+      parent project name. Use the id as project_id in the other tools.
+    params:
+      - name: page
+        description: Optional. Page number, starting at 1. Defaults to 1.
+        type: integer
+    request:
+      method: GET
+      path: /api/v3/projects
+      query:
+        - name: pageSize
+          value: "50"
+        - name: offset
+          value: "{page}"
+        - name: sortBy
+          value: '[["id","asc"]]'
+    response: >-
+      {total: total, count: count, page: offset, page_size: pageSize,
+      projects: _embedded.elements[].{id: id, identifier: identifier, name: name,
+      workspace_type: _type, active: active, public: public,
+      parent: _links.parent.title}}
+
+  - name: list_work_packages
+    description: >
+      Lists work packages across all projects the bot may see, 50 per page,
+      newest first (by id). Returns total, page and per work package: id,
+      subject, type, status, priority, project, versions, parent, assignee
+      (name), start_date, due_date (date for milestones), percentage_done and
+      updated_at. No description here
+      — call get_work_package for it. If total is larger than page times 50,
+      call again with the next page.
+    params:
+      - name: page
+        description: Optional. Page number, starting at 1. Defaults to 1.
+        type: integer
+      - name: state
+        description: >
+          Optional. Which work packages to return. Pass one enum value exactly
+          as listed: the value with operator "o" = open (not closed) work
+          packages, the value with operator "c" = closed work packages, [] =
+          all. Omit it for open work packages (OpenProject's default).
+        type: string
+        enum:
+          - '[{"status":{"operator":"o","values":[]}}]'
+          - '[{"status":{"operator":"c","values":[]}}]'
+          - '[]'
+    request:
+      method: GET
+      path: /api/v3/work_packages
+      query:
+        - name: pageSize
+          value: "50"
+        - name: offset
+          value: "{page}"
+        - name: sortBy
+          value: '[["id","desc"]]'
+        - name: filters
+          value: "{state}"
+    response: >-
+      {total: total, count: count, page: offset, page_size: pageSize,
+      work_packages: _embedded.elements[].{id: id, subject: subject,
+      type: _links.type.title, status: _links.status.title,
+      priority: _links.priority.title, project: _links.project.title,
+      versions: _links.targetVersions[].title, parent: _links.parent.title,
+      assignee: _links.assignee.title, start_date: startDate, due_date: dueDate, date: date,
+      percentage_done: percentageDone, updated_at: updatedAt}}
+
+  - name: list_project_work_packages
+    description: >
+      Lists the work packages of one project (project_id from list_projects),
+      50 per page, newest first (by id). Same fields as list_work_packages. If
+      total is larger than page times 50, call again with the next page.
+    params:
+      - name: project_id
+        description: The numeric project id (from list_projects).
+        type: integer
+        required: true
+      - name: page
+        description: Optional. Page number, starting at 1. Defaults to 1.
+        type: integer
+      - name: state
+        description: >
+          Optional. Which work packages to return. Pass one enum value exactly
+          as listed: the value with operator "o" = open (not closed) work
+          packages, the value with operator "c" = closed work packages, [] =
+          all. Omit it for open work packages (OpenProject's default).
+        type: string
+        enum:
+          - '[{"status":{"operator":"o","values":[]}}]'
+          - '[{"status":{"operator":"c","values":[]}}]'
+          - '[]'
+    request:
+      method: GET
+      path: /api/v3/workspaces/{project_id}/work_packages
+      query:
+        - name: pageSize
+          value: "50"
+        - name: offset
+          value: "{page}"
+        - name: sortBy
+          value: '[["id","desc"]]'
+        - name: filters
+          value: "{state}"
+    response: >-
+      {total: total, count: count, page: offset, page_size: pageSize,
+      work_packages: _embedded.elements[].{id: id, subject: subject,
+      type: _links.type.title, status: _links.status.title,
+      priority: _links.priority.title, project: _links.project.title,
+      versions: _links.targetVersions[].title, parent: _links.parent.title,
+      assignee: _links.assignee.title, start_date: startDate, due_date: dueDate, date: date,
+      percentage_done: percentageDone, updated_at: updatedAt}}
+
+  - name: get_work_package
+    description: >
+      Returns one work package by id with its description (plain text as
+      entered, may be empty), type, status, priority, project, versions,
+      parent, assignee, author and responsible (names), start_date, due_date
+      (date for milestones), percentage_done, created_at and updated_at.
+    params:
+      - name: work_package_id
+        description: The numeric work package id (from the list tools).
+        type: integer
+        required: true
+    request:
+      method: GET
+      path: /api/v3/work_packages/{work_package_id}
+    response: >-
+      {id: id, subject: subject, description: description.raw,
+      type: _links.type.title, status: _links.status.title,
+      priority: _links.priority.title, project: _links.project.title,
+      versions: _links.targetVersions[].title, parent: _links.parent.title,
+      assignee: _links.assignee.title, author: _links.author.title,
+      responsible: _links.responsible.title, start_date: startDate,
+      due_date: dueDate, date: date, percentage_done: percentageDone,
+      created_at: createdAt, updated_at: updatedAt}
+
+  - name: list_versions
+    description: >
+      Lists the versions (releases, sprints, milestones) usable in one project
+      (project_id from list_projects), including versions shared from other
+      projects. Returns per version: id, name, status (open, locked, closed),
+      sharing, start_date, end_date and the defining project.
+    params:
+      - name: project_id
+        description: The numeric project id (from list_projects).
+        type: integer
+        required: true
+    request:
+      method: GET
+      path: /api/v3/workspaces/{project_id}/versions
+    response: >-
+      _embedded.elements[].{id: id, name: name, status: status, sharing: sharing,
+      start_date: startDate, end_date: endDate,
+      project: _links.definingProject.title}
+
+  - name: list_statuses
+    description: >
+      Lists all work package statuses of the instance: id, name, is_closed,
+      is_default and position. is_closed tells which statuses count as closed
+      for the state filter.
+    request:
+      method: GET
+      path: /api/v3/statuses
+    response: >-
+      _embedded.elements[].{id: id, name: name, is_closed: isClosed,
+      is_default: isDefault, position: position}
