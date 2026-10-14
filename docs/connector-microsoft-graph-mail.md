@@ -72,7 +72,7 @@ Namensstamm** von `dateiname` — die tatsächliche Dateiendung setzt JanuaPort
 selbst, abgeleitet aus dem von Graph gemeldeten Inhaltstyp des Anhangs, nie
 aus der Eingabe der KI. Meldet Graph einen nicht gelisteten Typ — Outlook
 deklariert Anhänge gern als `application/octet-stream` —, erkennt JanuaPort den
-Inhalt und vergibt die Endung aus derselben Erlaubtliste : ein PDF wird
+Inhalt und vergibt die Endung aus derselben Erlaubtliste: ein PDF wird
 `.pdf`, ebenso PNG, JPEG, GIF; Text wird `.txt`, Unbekanntes `.bin`. Der
 Original-Dateiname des Absenders bestimmt die Endung nie (ein `x.pdf` mit
 Text-Inhalt wird nicht `.pdf`). **docx/xlsx** sind ZIP-Container und bleiben
@@ -187,8 +187,8 @@ die Entscheidung der KI, Nachricht für Nachricht).
 ⚠️ **Die Nachrichten-ID ändert sich nur, wenn der Ordner wechselt** (Graph-Verhalten,
 nicht unsere Entscheidung; live belegt). Beim Verschieben in einen
 **anderen** Ordner vergibt Graph eine **neue** ID, die alte antwortet danach mit 404.
-Beim Verschieben in den Ordner, in dem die Nachricht schon liegt, bleibt die ID gleich
-. Deshalb gibt `move_message` die ID zurück :
+Beim Verschieben in den Ordner, in dem die Nachricht schon liegt, bleibt die ID gleich.
+Deshalb gibt `move_message` die ID zurück:
 
 - **Die Antwort trägt `message_id`** mit der aktuell gültigen ID, und der Text nennt
   beide („bisher … jetzt …, die bisherige gilt nicht mehr"). Die KI nimmt für jeden

@@ -69,7 +69,7 @@
 # `subject` und `location` durch "(private)". Zeit, Status (`showAs`) und Art
 # bleiben — der Slot ist belegt, das ist die Auskunft. Ob Graph app-only den
 # Betreff eines privaten Termins überhaupt im Klartext liefert, belegt erst der
-# Live-Lauf ; die Maskierung gilt in beiden Fällen.
+# Live-Lauf; die Maskierung gilt in beiden Fällen.
 #
 # ENVELOPE-ABGLEICH gegen die Graph-Doku (Header heute in der Spec):
 # * `Authorization: Bearer <token>` — Doku-Pflicht; die Runtime setzt ihn aus

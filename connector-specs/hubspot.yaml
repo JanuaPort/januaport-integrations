@@ -43,7 +43,7 @@
 # in TestLesendePostsSindBelegt.
 # * Der Suchbegriff steht NUR als Vorlage "*{q}*" (CONTAINS_TOKEN mit
 # Platzhaltern der Doku) und ist Pflicht: Ein fehlender optionaler Wert
-# ließe ein Filter-Objekt ohne `value` stehen ((Produkt-Doku, nicht öffentlich) entfernt nur
+# ließe ein Filter-Objekt ohne `value` stehen (die Runtime entfernt nur
 # Tupel ganz). Ein nacktes "{q}" wiese die Lade-Regel S1(b) ab.
 # * ODER über mehrere Felder = je Feld eine filterGroup (Gruppen verknüpft
 # HubSpot mit ODER, Filter innerhalb einer Gruppe mit UND).

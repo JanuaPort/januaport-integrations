@@ -65,7 +65,7 @@
 #
 # FEHLER: Der Fehler-Body der Wawi trägt `stacktrace` mit Server-Interna. Er
 # erreicht den Agenten nicht — die Runtime reicht im Werkzeug-Pfad nur Status
-# und eine feste Erklärung weiter ((Produkt-Doku, nicht öffentlich), Vertragstest
+# und eine feste Erklärung weiter (Vertragstest
 # TestJTLWawiFehlerOhneStacktrace). 402 heißt: keine API-Lizenz, Lizenz nicht
 # synchronisiert oder die App ist nicht freigegeben (Anleitung §2).
 #

@@ -271,7 +271,7 @@ Textebene.
 Etikett. Es gibt **bewusst keine Tabellen-Sicht** (Zeilen/Spalten als
 Struktur, Spaltenfilter): Eine KI parst CSV-Text zuverlässig selbst, und eine
 Struktur-Sicht wird erst gebaut, wenn ein konkreter Use Case sie tatsächlich
-braucht ((Produkt-Doku, nicht öffentlich) — nichts auf Vorrat).
+braucht (nichts auf Vorrat).
 
 **Office lesen: docx, xlsx, pptx (heute).** `read_file` liefert den
 Text von Word-, Excel- und PowerPoint-Dateien — `kind` ist dann `docx`,
@@ -392,8 +392,7 @@ Antwort, und deshalb ist auf einer solchen Ablage der Scope die Grenze, die
 zählt. **Gibt es eine wirksame Pseudonymisierung, liefert das Werkzeug gar
 nicht** — s. o. und „Die Bytes und die Pseudonymisierung".
 
-**Der MIME-Typ kommt aus der festen Endungstabelle** ((Produkt-Doku, nicht öffentlich),
-`artTabelle`) — nicht aus `mime.TypeByExtension`, das im distroless-Container
+**Der MIME-Typ kommt aus der festen Endungstabelle** (`artTabelle`) — nicht aus `mime.TypeByExtension`, das im distroless-Container
 plattformabhängig wäre. Dieselbe Tabelle speist `art` in `list_files`:
 
 | Endungen | `art` | MIME |

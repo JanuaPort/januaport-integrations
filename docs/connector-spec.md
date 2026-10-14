@@ -813,8 +813,8 @@ die Inbox legt. Inbox vs. anheften: `get_voucher` liefert ein `files`-Array
   Satz B an jedem anderen Werkzeug scheitern (auch umformuliert), und der
   Wächter verbietet die alte Wenn-Formulierung in jedem Werkzeugtext.
 
-  **Warum nicht „a human must confirm":** JanuaPort fragt nie selbst
-  ((Produkt-Doku, nicht öffentlich) §1); fragen kann nur der Client über die
+  **Warum nicht „a human must confirm":** JanuaPort fragt nie selbst;
+  fragen kann nur der Client über die
   Annotation. Ein produktiver Agent, der „ein Mensch muss bestätigen" liest,
   wartet auf eine Bestätigung, die nie kommt. Eine Freigabe ist ein Auftrag
   des Menschen — ein Schritt in der Arbeitsliste oder eine ausdrückliche
@@ -1186,7 +1186,7 @@ konsistent halten muss.
   der Agent arbeitet. Ein **altes Vertragsdatum oder Gründungsjahr** aus dem
   Fenster wird weiterhin getroffen: nicht blind auf jedes Freitextfeld legen.
 - **Der Honigtopf wächst schneller:** ein Eintrag je **Treffer** statt je
-  deklariertem Feld ((Produkt-Doku, nicht öffentlich) §6).
+  deklariertem Feld.
 
 **Sicherheit & Grenzen (verbindlich):**
 - ~~**Scope-gebundene Reversal**~~ — **mit #343 aufgegeben** (PO-Entscheid,
