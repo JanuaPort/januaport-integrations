@@ -1,0 +1,615 @@
+# Microsoft Dynamics 365 Business Central (online), Standard-API v2.0.
+# Read-only, eine Firma in einer Umgebung; keine Textsuche und kein PDF.
+#
+# API: https://api.businesscentral.dynamics.com/v2.0/{tenant}/{environment}/api/v2.0
+# Doku (alle am 28.09.2026 gegen die Quelle MicrosoftDocs/dynamics365smb-devitpro-pb
+# geprüft, Pfad dev-itpro/…):
+# Endpunkt-Form (Common endpoint / Direct tenant)
+# https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/api-reference/v2.0/endpoints-apis-for-dynamics
+# App-only (S2S): Entra-App, API.ReadWrite.All, Scope.default, Token-URL, BC-Seite „Microsoft Entra applications"
+# https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/administration/automation-apis-using-s2s-authentication
+# Ressourcen + GET-Endpunkte (Feldnamen der $select/Projektionen)
+# …/dev-itpro/api-reference/v2.0/resources/dynamics_company + api/dynamics_company_get
+# …/dev-itpro/api-reference/v2.0/resources/dynamics_customer + api/dynamics_customer_get
+# …/dev-itpro/api-reference/v2.0/resources/dynamics_vendor + api/dynamics_vendor_get
+# …/dev-itpro/api-reference/v2.0/resources/dynamics_item + api/dynamics_item_get
+# …/dev-itpro/api-reference/v2.0/resources/dynamics_salesinvoice + api/dynamics_salesinvoice_get ($expand=salesInvoiceLines)
+# …/dev-itpro/api-reference/v2.0/resources/dynamics_salesinvoiceline
+# …/dev-itpro/api-reference/v2.0/resources/dynamics_agedaccountsreceivable + api/dynamics_agedaccountsreceivable_get
+# Data-Access-Intent
+# https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/developer/devenv-connect-apps-tips#DataAccessIntent
+# Grenzen (Drosselung, 20.000 Einträge je Antwort)
+# https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/administration/operational-limits-online
+# Blättern (Server-Paging, Prefer: odata.maxpagesize, $select)
+# https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/odata-client-performance
+# https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/webservices/server-driven-paging-in-odata-web-services
+# Anleitung: (Produkt-Doku, nicht öffentlich) (Entra-App, BC-Karte mit
+# Lese-Satz, Credential in den Vault, vier Werte in die Spec)
+#
+# [?] = in der Doku nicht belegt, im Live-DoD zu bestätigen.
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE. Vier Werte sind instanzspezifisch und stehen
+# als Null-GUID bzw. Beispielwert hier:
+# 1. MANDANT (Entra-Verzeichnis-ID) — in `auth.token_url` UND in `base_url`,
+# 2. CLIENT-ID der Entra-App — `auth.client_id`,
+# 3. UMGEBUNG — `production` in `base_url` (der Name der BC-Umgebung, z. B.
+# `sandbox`),
+# 4. FIRMA (companies.id) — instance.company_id, einmal value setzen;
+# die Marke in jedem Werkzeug-Pfad bleibt.
+# Der Platzhalter-Wächter (heute auch base_url und Pfade) lehnt eine
+# Aktivierung und `jnpt connector check` ab, solange irgendwo eine Null-GUID
+# steht — und nennt die Stelle. Das CLIENT SECRET steht NIE hier, nur im Vault
+# unter dem Namen "business-central".
+#
+# ⚠️ EINE INTEGRATION = EINE FIRMA IN EINER UMGEBUNG. Die Firma ist kein
+# Werkzeug-Parameter, sondern ein beim Laden aufgelöster Instanzwert im Pfad: Ein
+# Agent kann keine andere Firma ansprechen, als die Spec nennt. Die eigentliche
+# Firmengrenze zieht BC selbst — auf der Karte „Microsoft Entra applications"
+# bekommt die App einen NUR LESENDEN Berechtigungssatz, eingeschränkt auf die
+# eine Firma [?] (Anleitung Schritt 2). Wer eine zweite Firma anbinden will,
+# legt eine zweite Integration an (Instanz-Modell).
+# Das Mandanten-Segment in `base_url` ist laut Doku optional (der S2S-Beispiel-
+# aufruf lässt es weg); die Vorlage trägt es ausdrücklich, weil es bei S2S
+# nichts kostet und die Adresse eindeutig macht. Ob BC die Mandanten-GUID an
+# dieser Stelle annimmt (die Doku zeigt dort den Domänennamen), klärt das
+# Live-DoD [?].
+#
+# ⚠️ KEINE TEXTSUCHE — BEWUSST . Die Runtime setzt einen
+# String-Parameter roh in einen Query-Wert ein; `url.Values.Encode` kodiert nur
+# für die URL, und BC dekodiert `%27` wieder zu `'`. Eine Vorlage wie
+# `number eq '{n}'` bräche mit `x' or number ne 'y` aus dem Filter aus. Deshalb:
+# * KEIN `$filter` mit einem `{param}` — nur KONSTANTE Filter (ein Wächter-Test
+# in (Produkt-Doku, nicht öffentlich) hält das fest),
+# * Einzelabrufe über die GUID im PFAD (`customers({customer_id})`): Dort
+# escapt die Runtime per PathEscape (`'` → `%27`), und eine Nicht-GUID im
+# Schlüssel beantwortet BC mit 400 — ein Filter wird daraus nie.
+# Eine Format-Story für sichere OData-Textwerte kommt erst nach BC v1 und einem
+# Live-Beleg, dann mit eigenem Plan-First.
+#
+# ENVELOPE-ABGLEICH gegen die BC-Doku:
+# * `Authorization: Bearer <token>` — laut Doku an jedem GET Pflicht; die
+# Runtime setzt ihn aus `auth.template`, der Token kommt app-only aus
+# (Produkt-Doku, nicht öffentlich) (Scope `https://api.businesscentral.dynamics.com/.default`).
+# * `Accept: application/json` — setzt die Runtime auf jeden Request; BC
+# antwortet ohnehin JSON.
+# * `Data-Access-Intent: ReadOnly` — deklariert HIER auf Spec-Ebene. Laut Doku
+# lesen GETs damit vom Replikat, und „Modification requests (like POST,
+# PATCH, PUT, or DELETE) only support ReadWrite … If you try to specify
+# Data-Access-Intent: ReadOnly for such requests, the API returns an error."
+# Das ist die ZWEITE Linie für read-only — die erste ist das Format (nur GET,
+# kein `write`), die dritte der Lese-Satz auf der BC-Karte.
+# * Kein `Content-Type`/Body — alle Werkzeuge sind GET ohne Body.
+#
+# BLÄTTERN — Server-Paging, wie die BC-Doku es verlangt (Entscheidung zur Paginierung,
+# Connector-Treue vor Plan): odata-client-performance sagt zu $top+$skip
+# wörtlich „Don't use them with Business Central … Instead, use server-driven
+# paging." Deshalb trägt JEDES list_-Werkzeug auf Tool-Ebene den konstanten
+# Header `Prefer: odata.maxpagesize=50` (dokumentiert in
+# server-driven-paging-in-odata-web-services) — BC antwortet in Seiten zu 50
+# und legt `@odata.nextLink` bei, solange es mehr gibt. Die Projektion reicht
+# ihn als `next_link` durch; der Agent nimmt daraus den `$skiptoken`-Wert und
+# gibt ihn als Parameter `skiptoken` zurück (Muster SharePoint). Fehlt
+# `skiptoken`, entfällt der Query-Parameter — das ist die erste Seite. Kein
+# Auto-Paging. Einzelabrufe tragen den Header nicht (sie blättern nicht).
+# `skiptoken` ist ein opaker Wert für `$skiptoken`, KEIN Filter — der
+# Wächter „kein {param} in $filter" ist davon unberührt; die Firma bleibt im
+# Pfad fest. 50 Einträge liegen weit unter JanuaPorts 1-MiB-Deckel und unter
+# BCs 20.000er-Grenze (413). Ob die Folgeseite live so funktioniert (auch mit
+# `$orderby`/`$filter`), klärt das Live-DoD [?].
+#
+# FEHLER: OData-Form `{"error": {"code": …, "message": …}}`. Der Agent sieht nur
+# Status und die feste Erklärung der Runtime (Produkt-Doku, nicht öffentlich), nie den Body.
+#
+# DROSSELUNG (operational-limits-online, OData per user): 6.000 Anfragen im
+# gleitenden 5-Minuten-Fenster, 5 gleichzeitig in Arbeit (weitere warten in
+# einer Schlange), mehr als 100 gleichzeitige Verbindungen bzw. zu schnell ⇒
+# 429. Ob BC dabei `Retry-After` sendet, ist nicht dokumentiert [?]. JanuaPort
+# macht einen Versuch ohne Rückzug; `min_interval: 100ms` hält
+# einen Connector bei höchstens ~10 Aufrufen/s — weit unter 6.000/5 min.
+#
+# PRIVACY — KEIN `privacy:`-BLOCK IN DER VORLAGE (Betreiber-Entscheidung, Muster
+# der anderen Vorlagen). Wer Kontaktdaten der Kunden/Lieferanten nicht im
+# Klartext an ein Cloud-Modell geben will, ergänzt in SEINER Kopie bei
+# `list_customers`, `get_customer`, `list_vendors` und `get_vendor` (wörtlich
+# zum Einfügen):
+#
+# privacy:
+# read:
+# - { field: email, label: email }
+# - { field: phoneNumber, label: telefon }
+#
+# Namen (`displayName`, `customerName`, `name`) offen zu lassen oder ebenfalls
+# zu pseudonymisieren, entscheidet der Betreiber — bei Firmenkunden sind sie
+# selten personenbezogen, bei Privatkunden (`type: Person`) schon.
+#
+# KEIN `redact_params`: Die Parameter sind GUIDs und Blätter-Werte — technische
+# Kennungen, die im Audit einen Aufruf nachvollziehbar machen.
+#
+# BEWUSST NICHT DRIN: kein Schreiben, keine Custom-APIs,
+# kein On-Premises, keine Automation-API (und deshalb auch NICHT deren
+# Berechtigung `Automation.ReadWrite.All`), kein PDF (`pdfDocument`), kein
+# Auto-Blättern, keine Textsuche, keine `salesOrders`, eine Firma und eine
+# Umgebung je Integration. `customerLedgerEntries` gibt es in v2.0 nicht —
+# „offene Posten" sind hier `list_open_sales_invoices` plus
+# `list_aged_receivables`.
+
+name: business-central
+# Fassung dieser Vorlage — siehe demo-erp.yaml für die Bedeutung.
+version: "2.0.0"
+description: >
+  Microsoft Dynamics 365 Business Central (online), ONE company in ONE
+  environment: read customers, vendors, items, sales invoices (all or only the
+  open ones) and the aged accounts receivable. Read-only and app-only; no
+  writing, no text search, no PDF.
+base_url: https://api.businesscentral.dynamics.com/v2.0/00000000-0000-0000-0000-000000000000/production/api/v2.0
+
+instance:
+  - name: company_id
+    label: Firmen-ID
+    kind: guid
+    example: 00000000-0000-0000-0000-000000000000
+
+auth:
+  # App-only (S2S, Client-Credentials über Entra): JanuaPort holt den Token
+  # selbst — kein Mensch im Kreis.
+  type: oauth2_client_credentials
+  header: Authorization
+  template: "Bearer {{credential}}"
+  # Vault-Name des CLIENT SECRET (jnpt credential set --name business-central).
+  credential: business-central
+  # PLATZHALTER — durch die eigene Mandanten-(Verzeichnis-)ID ersetzen.
+  token_url: https://login.microsoftonline.com/00000000-0000-0000-0000-000000000000/oauth2/v2.0/token
+  # PLATZHALTER — durch die Anwendungs-(Client-)ID der Entra-App ersetzen. Dieselbe
+  # ID steht in BC auf der Karte „Microsoft Entra applications".
+  client_id: "00000000-0000-0000-0000-000000000000"
+  # Laut S2S-Doku der Scope für app-only: genau die dem Dienstprinzipal
+  # zugewiesenen Berechtigungen (API.ReadWrite.All).
+  scopes: ["https://api.businesscentral.dynamics.com/.default"]
+
+# Die zweite read-only-Linie (s. Kopf): BC weist jede Änderung mit diesem
+# Header ab, GETs lesen vom Replikat.
+headers:
+  Data-Access-Intent: ReadOnly
+
+timeout: 30s
+min_interval: 100ms
+
+tools:
+  - name: get_company
+    description: >
+      Returns the ONE Business Central company this integration is bound to:
+      id, name and displayName. The company is fixed in the connector
+      configuration — there is no parameter for it, and no other company can be
+      reached through this integration.
+      Use it as the first call when something looks wrong: it is also the probe
+      call of the operator's connector check. HTTP 401 or 403 here means the
+      application is not (or no longer) enabled in Business Central, or lacks
+      permission for this company — not a broken tool.
+    # Probe-Aufruf für `jnpt connector check` (Stufe 4) — parameterlos, weil die
+    # Firma fest ist. Zugleich der Live-Beleg, dass die BC-Karte greift.
+    check: true
+    request:
+      method: GET
+      # Firmenwert: companies.id aus GET …/companies einmal in instance.company_id.value setzen.
+      path: /companies({{instance.company_id}})
+      query:
+        - name: "$select"
+          value: "id,name,displayName"
+    response: >-
+      {id: id, name: name, displayName: displayName}
+
+  - name: list_customers
+    description: >
+      Lists the customers of the company, one page at a time. Returns per
+      customer: id (pass it on as customer_id), number, displayName, type
+      ("Company" or "Person"), city, country, balanceDue, blocked (" " means
+      not blocked; otherwise "Ship", "Invoice" or "All"), email, phoneNumber and
+      lastModifiedDateTime.
+      PAGING: Business Central answers in pages of 50 entries. If there are
+      more, next_link carries Business Central's own URL for the next page; if
+      it is null, you have seen everything. Take the value of the $skiptoken
+      query parameter out of next_link and pass it unchanged as skiptoken to
+      get the next page. There is no page number or offset, this tool never
+      follows the link by itself, and there is no search in this version.
+    params:
+      - name: skiptoken
+        description: >
+          Optional. The continuation token for the NEXT page. Take it from the
+          next_link URL of the previous answer — it is the value of the
+          $skiptoken parameter in that URL — and pass it through unchanged. It
+          is opaque: do not build one yourself, and do not reuse it with a
+          different tool.
+        type: string
+    # Server-Paging statt $top/$skip (BC-Doku: odata-client-performance,
+    # server-driven-paging-in-odata-web-services): konstante Seitengröße 50,
+    # weit unter JanuaPorts 1-MiB-Deckel. Nur an den Listen — ein Einzelabruf
+    # blättert nicht.
+    headers:
+      Prefer: odata.maxpagesize=50
+    request:
+      method: GET
+      # PLATZHALTER (Firma) wie bei get_company.
+      path: /companies({{instance.company_id}})/customers
+      query:
+        - name: "$select"
+          value: "id,number,displayName,type,city,country,balanceDue,blocked,email,phoneNumber,lastModifiedDateTime"
+        # Die Folgeseite (SharePoint-Muster). Fehlt skiptoken, entfällt der
+        # Query-Parameter ganz — das ist die erste Seite.
+        - name: "$skiptoken"
+          value: "{skiptoken}"
+    response: >-
+      {customers: value[*].{id: id, number: number, displayName: displayName,
+      type: type, city: city, country: country, balanceDue: balanceDue,
+      blocked: blocked, email: email, phoneNumber: phoneNumber,
+      lastModifiedDateTime: lastModifiedDateTime},
+      next_link: "@odata.nextLink"}
+
+  - name: get_customer
+    description: >
+      Returns ONE customer by its id: the fields of list_customers plus the
+      address (addressLine1, addressLine2, postalCode, city, state, country),
+      currencyCode and creditLimit.
+    params:
+      - name: customer_id
+        description: >
+          Required. The customer's id (a GUID) exactly as list_customers or an
+          invoice returned it — not the customer number.
+        type: string
+        required: true
+    request:
+      method: GET
+      path: /companies({{instance.company_id}})/customers({customer_id})
+      query:
+        - name: "$select"
+          value: "id,number,displayName,type,addressLine1,addressLine2,postalCode,city,state,country,email,phoneNumber,balanceDue,creditLimit,currencyCode,blocked,lastModifiedDateTime"
+    response: >-
+      {id: id, number: number, displayName: displayName, type: type,
+      addressLine1: addressLine1, addressLine2: addressLine2,
+      postalCode: postalCode, city: city, state: state, country: country,
+      email: email, phoneNumber: phoneNumber, balanceDue: balanceDue,
+      creditLimit: creditLimit, currencyCode: currencyCode, blocked: blocked,
+      lastModifiedDateTime: lastModifiedDateTime}
+
+  - name: list_vendors
+    description: >
+      Lists the vendors of the company, one page at a time. Returns per vendor:
+      id (pass it on as vendor_id), number, displayName, city, country, balance
+      (what the company owes the vendor), blocked (" " means not blocked;
+      otherwise "Payment" or "All"), email, phoneNumber and
+      lastModifiedDateTime.
+      PAGING: Business Central answers in pages of 50 entries. If there are
+      more, next_link carries Business Central's own URL for the next page; if
+      it is null, you have seen everything. Take the value of the $skiptoken
+      query parameter out of next_link and pass it unchanged as skiptoken to
+      get the next page. There is no page number or offset, this tool never
+      follows the link by itself, and there is no search in this version.
+    params:
+      - name: skiptoken
+        description: >
+          Optional. The continuation token for the NEXT page. Take it from the
+          next_link URL of the previous answer — it is the value of the
+          $skiptoken parameter in that URL — and pass it through unchanged. It
+          is opaque: do not build one yourself, and do not reuse it with a
+          different tool.
+        type: string
+    # Server-Paging statt $top/$skip (BC-Doku: odata-client-performance,
+    # server-driven-paging-in-odata-web-services): konstante Seitengröße 50,
+    # weit unter JanuaPorts 1-MiB-Deckel. Nur an den Listen — ein Einzelabruf
+    # blättert nicht.
+    headers:
+      Prefer: odata.maxpagesize=50
+    request:
+      method: GET
+      path: /companies({{instance.company_id}})/vendors
+      query:
+        - name: "$select"
+          value: "id,number,displayName,city,country,balance,blocked,email,phoneNumber,lastModifiedDateTime"
+        # Die Folgeseite (SharePoint-Muster). Fehlt skiptoken, entfällt der
+        # Query-Parameter ganz — das ist die erste Seite.
+        - name: "$skiptoken"
+          value: "{skiptoken}"
+    response: >-
+      {vendors: value[*].{id: id, number: number, displayName: displayName,
+      city: city, country: country, balance: balance, blocked: blocked,
+      email: email, phoneNumber: phoneNumber,
+      lastModifiedDateTime: lastModifiedDateTime},
+      next_link: "@odata.nextLink"}
+
+  - name: get_vendor
+    description: >
+      Returns ONE vendor by its id: the fields of list_vendors plus the address
+      (addressLine1, addressLine2, postalCode, city, state, country) and
+      currencyCode.
+    params:
+      - name: vendor_id
+        description: >
+          Required. The vendor's id (a GUID) exactly as list_vendors returned
+          it — not the vendor number.
+        type: string
+        required: true
+    request:
+      method: GET
+      path: /companies({{instance.company_id}})/vendors({vendor_id})
+      query:
+        - name: "$select"
+          value: "id,number,displayName,addressLine1,addressLine2,postalCode,city,state,country,email,phoneNumber,balance,currencyCode,blocked,lastModifiedDateTime"
+    response: >-
+      {id: id, number: number, displayName: displayName,
+      addressLine1: addressLine1, addressLine2: addressLine2,
+      postalCode: postalCode, city: city, state: state, country: country,
+      email: email, phoneNumber: phoneNumber, balance: balance,
+      currencyCode: currencyCode, blocked: blocked,
+      lastModifiedDateTime: lastModifiedDateTime}
+
+  - name: list_items
+    description: >
+      Lists the items (articles, services) of the company, one page at a time.
+      Returns per item: id (pass it on as item_id), number, displayName, type
+      ("Inventory", "Service" or "Non-Inventory"), inventory (units in stock),
+      unitPrice, baseUnitOfMeasureCode, blocked (true = no postings allowed)
+      and lastModifiedDateTime.
+      PAGING: Business Central answers in pages of 50 entries. If there are
+      more, next_link carries Business Central's own URL for the next page; if
+      it is null, you have seen everything. Take the value of the $skiptoken
+      query parameter out of next_link and pass it unchanged as skiptoken to
+      get the next page. There is no page number or offset, this tool never
+      follows the link by itself, and there is no search in this version.
+    params:
+      - name: skiptoken
+        description: >
+          Optional. The continuation token for the NEXT page. Take it from the
+          next_link URL of the previous answer — it is the value of the
+          $skiptoken parameter in that URL — and pass it through unchanged. It
+          is opaque: do not build one yourself, and do not reuse it with a
+          different tool.
+        type: string
+    # Server-Paging statt $top/$skip (BC-Doku: odata-client-performance,
+    # server-driven-paging-in-odata-web-services): konstante Seitengröße 50,
+    # weit unter JanuaPorts 1-MiB-Deckel. Nur an den Listen — ein Einzelabruf
+    # blättert nicht.
+    headers:
+      Prefer: odata.maxpagesize=50
+    request:
+      method: GET
+      path: /companies({{instance.company_id}})/items
+      query:
+        - name: "$select"
+          value: "id,number,displayName,type,inventory,unitPrice,baseUnitOfMeasureCode,blocked,lastModifiedDateTime"
+        # Die Folgeseite (SharePoint-Muster). Fehlt skiptoken, entfällt der
+        # Query-Parameter ganz — das ist die erste Seite.
+        - name: "$skiptoken"
+          value: "{skiptoken}"
+    response: >-
+      {items: value[*].{id: id, number: number, displayName: displayName,
+      type: type, inventory: inventory, unitPrice: unitPrice,
+      baseUnitOfMeasureCode: baseUnitOfMeasureCode, blocked: blocked,
+      lastModifiedDateTime: lastModifiedDateTime},
+      next_link: "@odata.nextLink"}
+
+  - name: get_item
+    description: >
+      Returns ONE item by its id: the fields of list_items plus
+      itemCategoryCode, gtin and priceIncludesTax (whether unitPrice includes
+      tax).
+    params:
+      - name: item_id
+        description: >
+          Required. The item's id (a GUID) exactly as list_items or an invoice
+          line returned it — not the item number.
+        type: string
+        required: true
+    request:
+      method: GET
+      path: /companies({{instance.company_id}})/items({item_id})
+      query:
+        - name: "$select"
+          value: "id,number,displayName,type,itemCategoryCode,gtin,inventory,unitPrice,priceIncludesTax,baseUnitOfMeasureCode,blocked,lastModifiedDateTime"
+    response: >-
+      {id: id, number: number, displayName: displayName, type: type,
+      itemCategoryCode: itemCategoryCode, gtin: gtin, inventory: inventory,
+      unitPrice: unitPrice, priceIncludesTax: priceIncludesTax,
+      baseUnitOfMeasureCode: baseUnitOfMeasureCode, blocked: blocked,
+      lastModifiedDateTime: lastModifiedDateTime}
+
+  - name: list_sales_invoices
+    description: >
+      Lists the sales invoices of the company, newest invoice date first, one
+      page at a time. Returns per invoice: id (pass it on as invoice_id),
+      number, invoiceDate, dueDate, customerNumber, customerName,
+      totalAmountIncludingTax, remainingAmount (still to be paid), status
+      ("Draft", "In Review", "Open", "Paid", "Canceled" or "Corrective") and
+      currencyCode (empty = the company's local currency).
+      For only the unpaid ones use list_open_sales_invoices.
+      PAGING: Business Central answers in pages of 50 entries. If there are
+      more, next_link carries Business Central's own URL for the next page; if
+      it is null, you have seen everything. Take the value of the $skiptoken
+      query parameter out of next_link and pass it unchanged as skiptoken to
+      get the next page. There is no page number or offset, this tool never
+      follows the link by itself, and there is no search in this version.
+    params:
+      - name: skiptoken
+        description: >
+          Optional. The continuation token for the NEXT page. Take it from the
+          next_link URL of the previous answer — it is the value of the
+          $skiptoken parameter in that URL — and pass it through unchanged. It
+          is opaque: do not build one yourself, and do not reuse it with a
+          different tool.
+        type: string
+    # Server-Paging statt $top/$skip (BC-Doku: odata-client-performance,
+    # server-driven-paging-in-odata-web-services): konstante Seitengröße 50,
+    # weit unter JanuaPorts 1-MiB-Deckel. Nur an den Listen — ein Einzelabruf
+    # blättert nicht.
+    headers:
+      Prefer: odata.maxpagesize=50
+    request:
+      method: GET
+      path: /companies({{instance.company_id}})/salesInvoices
+      query:
+        - name: "$select"
+          value: "id,number,invoiceDate,dueDate,customerNumber,customerName,totalAmountIncludingTax,remainingAmount,status,currencyCode"
+        # Neueste zuerst; `invoiceDate desc` als Sortierfeld ist [?].
+        - name: "$orderby"
+          value: "invoiceDate desc"
+        # Die Folgeseite (SharePoint-Muster). Fehlt skiptoken, entfällt der
+        # Query-Parameter ganz — das ist die erste Seite.
+        - name: "$skiptoken"
+          value: "{skiptoken}"
+    response: >-
+      {invoices: value[*].{id: id, number: number, invoiceDate: invoiceDate,
+      dueDate: dueDate, customerNumber: customerNumber,
+      customerName: customerName,
+      totalAmountIncludingTax: totalAmountIncludingTax,
+      remainingAmount: remainingAmount, status: status,
+      currencyCode: currencyCode},
+      next_link: "@odata.nextLink"}
+
+  - name: list_open_sales_invoices
+    description: >
+      Lists only the OPEN (posted, not yet fully paid) sales invoices of the
+      company, newest invoice date first — the receivables still to be
+      collected. Same fields as list_sales_invoices; remainingAmount is what is
+      still outstanding, dueDate tells whether it is overdue.
+      For an overview per customer and ageing bucket use list_aged_receivables.
+      PAGING: Business Central answers in pages of 50 entries. If there are
+      more, next_link carries Business Central's own URL for the next page; if
+      it is null, you have seen everything. Take the value of the $skiptoken
+      query parameter out of next_link and pass it unchanged as skiptoken to
+      get the next page. There is no page number or offset, this tool never
+      follows the link by itself, and there is no search in this version.
+    params:
+      - name: skiptoken
+        description: >
+          Optional. The continuation token for the NEXT page. Take it from the
+          next_link URL of the previous answer — it is the value of the
+          $skiptoken parameter in that URL — and pass it through unchanged. It
+          is opaque: do not build one yourself, and do not reuse it with a
+          different tool.
+        type: string
+    # Server-Paging statt $top/$skip (BC-Doku: odata-client-performance,
+    # server-driven-paging-in-odata-web-services): konstante Seitengröße 50,
+    # weit unter JanuaPorts 1-MiB-Deckel. Nur an den Listen — ein Einzelabruf
+    # blättert nicht.
+    headers:
+      Prefer: odata.maxpagesize=50
+    request:
+      method: GET
+      path: /companies({{instance.company_id}})/salesInvoices
+      query:
+        - name: "$select"
+          value: "id,number,invoiceDate,dueDate,customerNumber,customerName,totalAmountIncludingTax,remainingAmount,status,currencyCode"
+        # KONSTANTER Filter — nie ein {param} in $filter (s. Kopf, Wächter-Test).
+        # Der Wert „Open" steht in der Doku als Status-Wert; die Filter-Schreibweise
+        # auf das Enum-Feld ist [?].
+        - name: "$filter"
+          value: "status eq 'Open'"
+        - name: "$orderby"
+          value: "invoiceDate desc"
+        # Die Folgeseite (SharePoint-Muster). Fehlt skiptoken, entfällt der
+        # Query-Parameter ganz — das ist die erste Seite.
+        - name: "$skiptoken"
+          value: "{skiptoken}"
+    response: >-
+      {invoices: value[*].{id: id, number: number, invoiceDate: invoiceDate,
+      dueDate: dueDate, customerNumber: customerNumber,
+      customerName: customerName,
+      totalAmountIncludingTax: totalAmountIncludingTax,
+      remainingAmount: remainingAmount, status: status,
+      currencyCode: currencyCode},
+      next_link: "@odata.nextLink"}
+
+  - name: get_sales_invoice
+    description: >
+      Returns ONE sales invoice by its id, with its lines. Header: id, number,
+      externalDocumentNumber (the customer's reference), invoiceDate,
+      postingDate, dueDate, customerId, customerNumber, customerName,
+      currencyCode, totalAmountExcludingTax, totalTaxAmount,
+      totalAmountIncludingTax, remainingAmount and status. Lines, in order:
+      sequence, lineType ("Item", "Account", "Comment", …), lineObjectNumber
+      (item or account number), description, quantity, unitOfMeasureCode,
+      unitPrice, discountPercent, amountExcludingTax, taxPercent and
+      amountIncludingTax. No PDF.
+    params:
+      - name: invoice_id
+        description: >
+          Required. The invoice's id (a GUID) exactly as list_sales_invoices or
+          list_open_sales_invoices returned it — not the invoice number.
+        type: string
+        required: true
+    request:
+      method: GET
+      path: /companies({{instance.company_id}})/salesInvoices({invoice_id})
+      query:
+        - name: "$select"
+          value: "id,number,externalDocumentNumber,invoiceDate,postingDate,dueDate,customerId,customerNumber,customerName,currencyCode,totalAmountExcludingTax,totalTaxAmount,totalAmountIncludingTax,remainingAmount,status"
+        # Wörtlich das Doku-Beispiel (dynamics_salesinvoice_get). Die Zeilen
+        # verengt die Projektion; ein verschachteltes $select wäre möglich
+        # (odata-client-performance), ist aber kein Doku-Beispiel.
+        - name: "$expand"
+          value: "salesInvoiceLines"
+    response: >-
+      {id: id, number: number, externalDocumentNumber: externalDocumentNumber,
+      invoiceDate: invoiceDate, postingDate: postingDate, dueDate: dueDate,
+      customerId: customerId, customerNumber: customerNumber,
+      customerName: customerName, currencyCode: currencyCode,
+      totalAmountExcludingTax: totalAmountExcludingTax,
+      totalTaxAmount: totalTaxAmount,
+      totalAmountIncludingTax: totalAmountIncludingTax,
+      remainingAmount: remainingAmount, status: status,
+      lines: salesInvoiceLines[*].{sequence: sequence, lineType: lineType,
+      lineObjectNumber: lineObjectNumber, description: description,
+      quantity: quantity, unitOfMeasureCode: unitOfMeasureCode,
+      unitPrice: unitPrice, discountPercent: discountPercent,
+      amountExcludingTax: amountExcludingTax, taxPercent: taxPercent,
+      amountIncludingTax: amountIncludingTax}}
+
+  - name: list_aged_receivables
+    description: >
+      Lists the aged accounts receivable of the company: per customer the
+      outstanding balanceDue, split into currentAmount (not yet due) and three
+      ageing buckets (period1Amount … period3Amount, each named by its
+      periodNLabel), plus customerNumber, name, currencyCode, agedAsOfDate (the
+      reference date) and periodLengthFilter (the bucket length, e.g. "30D").
+      Use it to answer "who owes us how much, and how long overdue"; for the
+      individual invoices use list_open_sales_invoices.
+      PAGING: Business Central answers in pages of 50 entries. If there are
+      more, next_link carries Business Central's own URL for the next page; if
+      it is null, you have seen everything. Take the value of the $skiptoken
+      query parameter out of next_link and pass it unchanged as skiptoken to
+      get the next page. There is no page number or offset, this tool never
+      follows the link by itself, and there is no search in this version.
+    params:
+      - name: skiptoken
+        description: >
+          Optional. The continuation token for the NEXT page. Take it from the
+          next_link URL of the previous answer — it is the value of the
+          $skiptoken parameter in that URL — and pass it through unchanged. It
+          is opaque: do not build one yourself, and do not reuse it with a
+          different tool.
+        type: string
+    # Server-Paging statt $top/$skip (BC-Doku: odata-client-performance,
+    # server-driven-paging-in-odata-web-services): konstante Seitengröße 50,
+    # weit unter JanuaPorts 1-MiB-Deckel. Nur an den Listen — ein Einzelabruf
+    # blättert nicht.
+    headers:
+      Prefer: odata.maxpagesize=50
+    request:
+      method: GET
+      # Die Doku zeigt nur den Einzelabruf agedAccountsReceivables({customerId});
+      # die Sammlung ohne Schlüssel ist OData-Standard, aber [?].
+      path: /companies({{instance.company_id}})/agedAccountsReceivables
+      query:
+        - name: "$select"
+          value: "customerId,customerNumber,name,currencyCode,balanceDue,currentAmount,period1Label,period1Amount,period2Label,period2Amount,period3Label,period3Amount,agedAsOfDate,periodLengthFilter"
+        # Die Folgeseite (SharePoint-Muster). Fehlt skiptoken, entfällt der
+        # Query-Parameter ganz — das ist die erste Seite.
+        - name: "$skiptoken"
+          value: "{skiptoken}"
+    response: >-
+      {receivables: value[*].{customerId: customerId,
+      customerNumber: customerNumber, name: name, currencyCode: currencyCode,
+      balanceDue: balanceDue, currentAmount: currentAmount,
+      period1Label: period1Label, period1Amount: period1Amount,
+      period2Label: period2Label, period2Amount: period2Amount,
+      period3Label: period3Label, period3Amount: period3Amount,
+      agedAsOfDate: agedAsOfDate, periodLengthFilter: periodLengthFilter},
+      next_link: "@odata.nextLink"}

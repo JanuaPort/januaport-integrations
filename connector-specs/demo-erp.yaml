@@ -1,6 +1,6 @@
 # Demo-ERP — read-only connector for the JanuaPort walkthrough.
 #
-# Upstream: the tiny fake ERP under examples/demo-erp (see its CLAUDE.md). It
+# Upstream: the product demo ERP (Produkt-Doku, nicht öffentlich). It
 #           serves fixed, made-up invoices and bank transactions whose data tell
 #           a reconciliation story — perfect for trying out JanuaPort end to end
 #           WITHOUT a real accounting account.

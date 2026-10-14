@@ -35,7 +35,7 @@ kann sie von außen beigetragen und geprüft werden, ohne dass jemand das Gatewa
 
 | Ordner | Inhalt |
 |---|---|
-| [`connector-specs/`](connector-specs/) | Die ausgelieferten REST-Specs — fünf Stück, Tabelle unten. |
+| [`connector-specs/`](connector-specs/) | Die ausgelieferten REST-Specs — 15 Stück, Tabelle unten. |
 | [`upstream-specs/`](upstream-specs/) | Beispiel-Konfiguration für einen **MCP-Upstream** (fremder MCP-Server unter unserer Governance): `github.yaml`. |
 | [`docs/`](docs/) | Die vier Format-Verträge, die Bau-Disziplin und zwei Betreiber-Anleitungen. |
 | [`examples/`](examples/) | Beilagen zu den Anleitungen (heute: das Exchange-Skript zur Ein-Postfach-Grenze). |
@@ -106,9 +106,25 @@ gelaufen, im Backlog dokumentiert.
 | [`demo-erp.yaml`](connector-specs/demo-erp.yaml) | 2, lesend | **Gebaut, nur zur Vorführung.** Attrappe für den Rundgang — spricht ein erfundenes ERP an, kein echtes System. Braucht das Beispiel-ERP aus dem Produkt-Repository. |
 | [`dokumente.yaml`](connector-specs/dokumente.yaml) | 4, lesend | **Gebaut.** Live belegt (20.09.2026): alle vier Prüfstufen grün, Suche über `/mcp` mit erwartetem Treffer, Audit mit redigiertem Suchbegriff. Vorlage — ein Wissensbereich je Integration. |
 | [`lexware-office.yaml`](connector-specs/lexware-office.yaml) | 6, davon 2 schreibend | **Gebaut.** Lesen live belegt. Die beiden schreibenden Werkzeuge (Beleg hochladen, Belegbild anheften) sind gebaut, **der Live-Beleg des Schreibwegs steht aus**. |
-| [`microsoft-graph-mail.yaml`](connector-specs/microsoft-graph-mail.yaml) | 5, davon 1 schreibend | **Gebaut.** Live belegt (06./07.08.2026): Lesen mit 200, Entwurf real angelegt samt Gegenprobe „nichts versendet“. **Ein-Postfach-Grenze belegt (13.08.2026):** zweites, existierendes Postfach antwortet mit 403. Kein Sende-Werkzeug — bewusst. |
-| [`microsoft-graph-sharepoint.yaml`](connector-specs/microsoft-graph-sharepoint.yaml) | 4, lesend | **Gebaut.** Live belegt am echten Tenant (25.08.2026): 403 vor dem Site-Grant, 200 danach. Nur Metadaten, nie Datei-Inhalte. |
+| [`microsoft-graph-mail.yaml`](connector-specs/microsoft-graph-mail.yaml) | 8 insgesamt: 5 YAML + 3 nativ, davon 4 schreibend | **Gebaut.** Live belegt (06./07.08.2026): Lesen mit 200, Entwurf real angelegt samt Gegenprobe „nichts versendet“. **Ein-Postfach-Grenze belegt (13.08.2026):** zweites, existierendes Postfach antwortet mit 403. Kein Sende-Werkzeug — bewusst. Native Werkzeuge: `save_attachment`, `move_message`, `mark_read`; YAML bleibt auf 2.0.2. |
+| [`microsoft-graph-sharepoint.yaml`](connector-specs/microsoft-graph-sharepoint.yaml) | 4, lesend | **Gebaut.** Live belegt am echten Tenant (25.08.2026): 403 vor dem Site-Grant, 200 danach. Nur Metadaten, nie Datei-Inhalte. Vorlage 2.0.0 nutzt eine Site-ID als Instanzwert; diese neue Form ist noch nicht live belegt. |
+| [`business-central.yaml`](connector-specs/business-central.yaml) (2.0.0) | 11, lesend | Gebaut; Live-Beleg ausstehend. Online-API v2.0, eine Firma in einer Umgebung; Mandant und Firma sind Instanzwerte. |
+| [`hubspot.yaml`](connector-specs/hubspot.yaml) (1.0.0) | 8, lesend | Gebaut; Live-Beleg ausstehend. Kontakte, Firmen und Deals; lesende Suchen per POST. |
+| [`jtl-wawi.yaml`](connector-specs/jtl-wawi.yaml) (1.0.0) | 10, lesend | Gebaut; Live-Beleg ausstehend. On-Prem-API-Version 2.0; feste Request-Header, kein Schreiben. |
+| [`microsoft-graph-calendar.yaml`](connector-specs/microsoft-graph-calendar.yaml) (1.0.0) | 3, lesend | Gebaut; Live-Beleg ausstehend. Ein Postfach; keine Teilnehmer und kein Termintext. |
+| [`odoo.yaml`](connector-specs/odoo.yaml) (3.1.0) | 15, davon 4 schreibend | Gebaut. Werkzeuge der früheren 3.0.0 live belegt (30.09.2026); Datenbank-Instanzwert der 3.1.0 noch nicht live belegt. Chatter benötigt eine eigene Integration mit internem Odoo-Nutzer. Das Vertragsmodell ist eine Erweiterung, kein Odoo-Standard. |
+| [`openproject.yaml`](connector-specs/openproject.yaml) (1.0.0) | 7, lesend | Gebaut; live belegt gegen 17.8.0 (30.09.2026). Projekte und Arbeitspakete; keine Zeitbuchungen und keine Nutzerlisten. |
+| [`paperless.yaml`](connector-specs/paperless.yaml) (1.0.0) | 6, lesend | Gebaut; live belegt gegen 3.2.1 (30.09.2026). Nur Metadaten; kein OCR-Text, Datei-Inhalt oder Download. |
+| [`shopware-admin.yaml`](connector-specs/shopware-admin.yaml) (1.0.0) | 6, lesend | Gebaut; live belegt gegen 6.7.14.2 (29.09.2026). ACL-Rolle nur lesend; JSON-Antwortformat und geerbte Variantennamen. |
+| [`woocommerce.yaml`](connector-specs/woocommerce.yaml) (1.0.0) | 7, lesend | Gebaut; live belegt gegen 11.1.2 (30.09.2026). Read-Key per Basic über HTTPS; feste Feldlisten. |
+| [`zammad.yaml`](connector-specs/zammad.yaml) (1.0.0) | 7, lesend | Gebaut; live belegt gegen 7.2.0 (30.09.2026). Nur Metadaten; keine Artikel oder Notizen. Der Anbieter-Token kann Kunden und Organisationen schreiben; JanuaPort bietet nur GET-Werkzeuge an. |
 | [`upstream-specs/github.yaml`](upstream-specs/github.yaml) | Allowlist | **Gebaut.** Ausgeliefert seit v0.2.0, Lese-Relay live belegt. Beispiel für das Instanz-Modell: dieselbe URL, verschiedene Zugänge und Allowlists. |
+
+Die Vorlagen tragen die Produktversionen. Weitere Anbieter-Anleitungen bleiben
+Produkt-Doku, nicht öffentlich; Formatregeln und Herstellerverweise stehen in den
+Spec-Kommentaren und in der [Bau-Disziplin](docs/connector-treue.md). Die Live-Belege
+oben stammen aus dem Produkt; dieser Spiegel-Nachzug wurde lokal ohne
+Anbieter-Aufrufe geprüft.
 
 Betreiber-Anleitungen liegen für die beiden Graph-Connectoren bei
 ([Postfach](docs/connector-microsoft-graph-mail.md),

@@ -1,6 +1,6 @@
 # SharePoint-Dokumentbibliotheken EINER Site über Microsoft Graph (v1.0) —
 # read-only und NUR METADATEN. KEIN DATEI-INHALT, KEIN DOWNLOAD, KEIN SCHREIBEN
-# (Story #551, PO-Go 20.08.2026, v1-Schnitt des Connector-Brains).
+# Vorlage für eine einzelne Site.
 #
 # API:        https://graph.microsoft.com
 # Doku:       Site holen (Adressierung {hostname}:/{server-relative-path})
@@ -25,20 +25,15 @@
 #
 # ⚠️ DIESE DATEI IST EINE VORLAGE. Drei Werte sind mandantenspezifisch und
 # stehen hier als Platzhalter: `token_url` und `client_id` als Null-GUID sowie
-# die SITE-ADRESSE in den Pfaden von `get_site` und `list_libraries`
-# (`contoso.sharepoint.com:/sites/Belegablage` — der Beispiel-Host der
-# Microsoft-Doku). Vor dem Einsatz alle drei durch die eigenen Werte ersetzen;
-# die Datei bleibt dabei einchecktauglich: das CLIENT SECRET steht NIE hier,
-# sondern nur im Vault unter dem Namen "microsoft-graph-sharepoint".
+# die SITE-ID als instance.site_id (value fehlt in der Vorlage). Die ID einmal
+# mit GET /sites/{host}:/sites/{pfad} ermitteln und als host,guid,guid eintragen.
+# Die Pfadmarken bleiben stehen. Das CLIENT SECRET steht NIE hier, sondern nur
+# im Vault unter dem Namen "microsoft-graph-sharepoint".
 #
-# ⚠️ EINE INTEGRATION = EINE SITE. Die Governance-Grenze von `Sites.Selected`
-# IST die Site — deshalb steht ihre Adresse fest in der Spec und ist kein
-# Tool-Parameter. Wer eine zweite Site anbinden will, legt eine zweite
-# Integration mit eigenem Credential und eigenem Grant an (Instanz-Modell), statt
-# hier einen Parameter zu ergänzen. Wer statt der Adressform lieber die einmalig
-# aufgelöste Site-ID (`contoso.sharepoint.com,<guid>,<guid>`) einsetzt: Sie passt
-# an dieselbe Stelle — dann entfällt in `list_libraries` der ABSCHLIESSENDE
-# Doppelpunkt (`/v1.0/sites/<id>/drives`), er gehört zur Pfad-Adressierung.
+# ⚠️ EINE INTEGRATION = EINE SITE. Sites.Selected begrenzt die Site; sie ist
+# ein fester Anlagenwert, kein Werkzeug-Parameter. Zweite Site = zweite
+# Integration mit eigenem Credential und Grant. Nur die ID-Form ohne / passt
+# zum segment-Vertrag; die Pfade haben keinen abschließenden Doppelpunkt.
 #
 # ⚠️ OHNE PER-SITE-GRANT IST DIE EINRICHTUNG NICHT FERTIG — und das ist hier
 # nicht die Ausnahme, sondern das Prinzip. `Sites.Read.All` (Anwendung) wäre
@@ -88,7 +83,7 @@
 # Runtime-Sache, die fachlichen deklariert die Spec seit #347):
 #   * `Authorization: Bearer <token>` — Doku-Pflicht an allen vier Endpunkten;
 #     die Runtime setzt ihn aus `auth.template`, der Token kommt app-only aus
-#     `internal/oauth2cc`.
+# (Produkt-Doku, nicht öffentlich).
 #   * `Accept: application/json` — die Runtime setzt ihn auf JEDEN Request
 #     (#73). Graph verlangt ihn hier nicht, es schadet aber nicht: Graph
 #     antwortet ohnehin JSON.
@@ -120,12 +115,18 @@
 
 name: microsoft-graph-sharepoint
 # Fassung dieser Vorlage (Story #427) — siehe demo-erp.yaml für die Bedeutung.
-version: "1.0.0"
+version: "2.0.0"
 description: >
   SharePoint document libraries of ONE site via Microsoft Graph: list the
   libraries, browse folders and read item METADATA. Read-only and app-only;
   this connector never returns file content and never a download link.
 base_url: https://graph.microsoft.com
+
+instance:
+  - name: site_id
+    label: SharePoint-Site-ID
+    kind: segment
+    example: contoso.sharepoint.com,guid,guid
 
 auth:
   # App-only (Client-Credentials): JanuaPort holt den Access-Token selbst beim
@@ -171,9 +172,8 @@ tools:
     check: true
     request:
       method: GET
-      # PLATZHALTER (Site-Adresse) — Form: /v1.0/sites/{hostname}:/{server-relative-path}
-      # Beispiel aus der Microsoft-Doku: contoso.sharepoint.com:/teams/1drvteam.
-      path: "/v1.0/sites/contoso.sharepoint.com:/sites/Belegablage"
+      # Site-ID aus instance.site_id, einmalig über die Adressform ermittelt.
+      path: "/v1.0/sites/{{instance.site_id}}"
       # Bewusst OHNE `$select`: Die Doku nennt für „Get a site" keine optionalen
       # Query-Parameter. Die Verengung leistet hier allein die Projektion — und
       # die ist ohnehin die verlässlichere der beiden (s. Kopf).
@@ -194,10 +194,8 @@ tools:
       Metadata only — no file contents, no download links.
     request:
       method: GET
-      # PLATZHALTER (Site-Adresse) wie bei get_site. Der ABSCHLIESSENDE
-      # Doppelpunkt beendet die Pfad-Adressierung der Site, damit `/drives`
-      # als Beziehung dahinter steht.
-      path: "/v1.0/sites/contoso.sharepoint.com:/sites/Belegablage:/drives"
+      # Site-ID-Form: /drives ist ein Unterpfad ohne Adressierungs-Doppelpunkt.
+      path: "/v1.0/sites/{{instance.site_id}}/drives"
       query:
         # Fester $select (die Doku nennt ihn für diesen Endpunkt ausdrücklich
         # als unterstützt): kleinere Antworten und eine Antwortform, die der

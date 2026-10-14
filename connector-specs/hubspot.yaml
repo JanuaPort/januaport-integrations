@@ -1,0 +1,365 @@
+# HubSpot CRM — Kontakte, Firmen und Deals lesen.
+# Nur lesend: kein Anlegen, kein Ändern, keine Owners.
+#
+# API: REST, datums-versioniert, Version 2026-09 (Pfadsegment `2026-09`)
+# https://api.hubapi.com
+# Doku: Index https://developers.hubspot.com/docs/llms.txt (geprüft 29.09.2026)
+# Suche: https://developers.hubspot.com/docs/api-reference/latest/crm/search-the-crm
+# POST /crm/objects/2026-09/{contacts|companies}/search
+# (PublicObjectSearchRequest: filterGroups, properties, limit, after)
+# Einzelabruf: …/objects/{contacts|companies}/get-contact|get-company,
+# …/objects/deals/get-deal — GET /crm/objects/2026-09/<objekt>/{id}
+# mit `properties`, `associations`, `idProperty`
+# Liste Deals: …/objects/deals/guide — GET /crm/objects/2026-09/deals
+# Verknüpfungen: …/associations/associate-records/guide —
+# GET /crm/objects/2026-09/{fromObjectType}/{objectId}/associations/{toObjectType}
+# Pipelines: …/pipelines/get-pipelines — GET /crm/pipelines/2026-09/{objectType}
+# Versionen: https://developers.hubspot.com/docs/developer-tooling/platform/versioning
+# Limits: https://developers.hubspot.com/docs/developer-tooling/platform/usage-guidelines
+# Anleitung: (Produkt-Doku, nicht öffentlich) (Private App als Super-Admin, drei
+# Lese-Scopes, Token-Rotation, Credential in den Vault)
+#
+# AUTH: Legacy Private App, Zugriffstoken als `Authorization: Bearer <token>`
+# (statisch, kein OAuth2). Der TOKEN steht NIE hier, sondern nur im Vault unter
+# dem Namen "hubspot". Die App braucht genau drei Scopes:
+# crm.objects.contacts.read, crm.objects.companies.read, crm.objects.deals.read
+# (der letzte deckt auch die Deal-Pipelines ab).
+#
+# VERSION: HubSpot versioniert seit 30.03.2026 nach Datum. 2026-09 ist sechs
+# Monate "Current", danach "Supported", 18 Monate nach Erscheinen
+# "Unsupported". Ein Versionswechsel ändert jeden Pfad und ist damit MAJOR
+# dieser Vorlage. Die alten /crm/v3-Pfade laufen laut Doku weiter.
+#
+# ENVELOPE-ABGLEICH:
+# * `Authorization: Bearer <token>` — aus `auth.template`.
+# * `Content-Type: application/json` — kommt bei den Suchen aus
+# `encoding: json`; kein Hand-Header.
+# * `Accept: application/json` setzt die Runtime.
+#
+# FORMAT-REGELN DES SCHNITTS:
+# * Die zwei Suchen sind lesende POSTs (`read_via_post: true`) auf KONSTANTEM
+# Pfad, der auf /search endet und laut Referenz nur den read-Scope des
+# Objekts verlangt. Der Body hat kein Feld, das eine Operation wählt; belegt
+# in TestLesendePostsSindBelegt.
+# * Der Suchbegriff steht NUR als Vorlage "*{q}*" (CONTAINS_TOKEN mit
+# Platzhaltern der Doku) und ist Pflicht: Ein fehlender optionaler Wert
+# ließe ein Filter-Objekt ohne `value` stehen (die Runtime entfernt nur
+# Tupel ganz). Ein nacktes "{q}" wiese die Lade-Regel S1(b) ab.
+# * ODER über mehrere Felder = je Feld eine filterGroup (Gruppen verknüpft
+# HubSpot mit ODER, Filter innerhalb einer Gruppe mit UND).
+# * KEINE optionalen Filter (Stufe, Owner, Firma): Sie bräuchten eine
+# Runtime-Regel "Filter-Objekt entfällt ganz" plus eine Ausnahme in der
+# Lade-Regel — eigene Story mit Plan-First.
+# * `after` ist im Such-Body eine ganze Zahl (die Doku verlangt "als integer
+# formatiert", freie Strings weist S1(b) ab). Ob HubSpot die JSON-Zahl
+# annimmt, ist erst live belegt (U1). In den GET-Listen ist `after`
+# ein Query-Wert.
+# * Jede Feldliste (`properties`) und jede Verknüpfung (`associations`) ist
+# KONSTANT; der Agent kann keine weiteren Felder ziehen. Jede Liste hat
+# einen festen Deckel `limit` 50 (Suche erlaubt bis 200).
+# * Jede Antwort wird projiziert: weg sind createdAt/updatedAt, url,
+# archived, hs_object_id und die Link-URL der Folgeseite; der Cursor kommt
+# flach als `next_after`.
+#
+# OFFEN, ERST LIVE ZU KLÄREN: U1 `after` als Zahl in der Suche · U2
+# führender Platzhalter "*…" und Umlaute in CONTAINS_TOKEN · U3 der Alias
+# `deals` statt `0-3` in 2026-09 (die Referenz nennt `0-3`, der Leitfaden
+# `deals`) · U4/U5 `limit`/`after` bei den Verknüpfungen und eine mögliche
+# Kappung der Verknüpfungen im Einzelabruf.
+#
+# DATENSCHUTZ:
+# * redact_params [q, contact]: Suchbegriffe und E-Mail-Lookups tragen
+# Personenbezug und erscheinen im Audit nur als [REDACTED].
+# * KEINE Owners (weder Werkzeug noch Feld `hubspot_owner_id`): Owners plus
+# Deals ergäbe eine Auswertung "wer hat welche Deals" (Leitplanke 1).
+# * Bewusst KEIN `privacy:`-Block in der Vorlage — welche Felder
+# pseudonymisiert gehören, entscheidet der Betreiber. Die Projektionen sind
+# flach, die Feldnamen stehen direkt im Antwortobjekt. Vorlage zum Ergänzen
+# an search_contacts und get_contact (Format: docs/connector-spec.md,
+# Abschnitt Privacy):
+#
+# privacy:
+# read:
+# - {field: email, label: email}
+# - {field: phone, label: telefon}
+# - {field: firstname, label: name}
+# - {field: lastname, label: name}
+#
+# RATE LIMITS: Die Suche ist auf 5 Aufrufe je Sekunde JE ACCOUNT begrenzt,
+# allgemein gelten für private Apps 100 Aufrufe je 10 s (Free/Starter).
+# `min_interval: 250ms` hält den Connector unter beiden.
+
+name: hubspot
+# Fassung dieser Vorlage — siehe demo-erp.yaml für die Bedeutung.
+version: "1.0.0"
+description: >
+  HubSpot CRM (read-only): search contacts and companies, read one contact,
+  company or deal with its linked records, list the contacts of a company,
+  list deals and resolve deal stage ids with the deal pipelines.
+base_url: https://api.hubapi.com
+
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  # Vault-Name des Private-App-Tokens (jnpt credential set --name hubspot).
+  credential: hubspot
+
+timeout: 30s
+min_interval: 250ms
+
+redact_params: [q, contact]
+
+tools:
+  - name: search_contacts
+    description: >
+      Searches HubSpot contacts whose first name, last name OR email contains
+      the search term. Returns items (id, firstname, lastname, email, phone,
+      company, jobtitle, lifecyclestage), total (number of matches) and
+      next_after. At most 50 contacts per call; if next_after is not null,
+      call again with after = next_after for the next page. Use the id with
+      get_contact for the linked companies and deals. Read-only.
+    params:
+      - name: q
+        description: >
+          Required. The search term, e.g. a name or a part of an email
+          address. Case-insensitive.
+        type: string
+        required: true
+      - name: after
+        description: >
+          Optional. Paging cursor: the number from next_after of the previous
+          answer. Omit it for the first page.
+        type: integer
+    request:
+      method: POST
+      path: /crm/objects/2026-09/contacts/search
+      encoding: json
+      read_via_post: true
+      body_json:
+        filterGroups:
+          - filters:
+              - {propertyName: firstname, operator: CONTAINS_TOKEN, value: "*{q}*"}
+          - filters:
+              - {propertyName: lastname, operator: CONTAINS_TOKEN, value: "*{q}*"}
+          - filters:
+              - {propertyName: email, operator: CONTAINS_TOKEN, value: "*{q}*"}
+        properties: [firstname, lastname, email, phone, company, jobtitle, lifecyclestage]
+        limit: 50
+        after: "{after}"
+    response: >-
+      {items: results[*].{id: id, firstname: properties.firstname,
+      lastname: properties.lastname, email: properties.email,
+      phone: properties.phone, company: properties.company,
+      jobtitle: properties.jobtitle, lifecyclestage: properties.lifecyclestage},
+      total: total, next_after: paging.next.after}
+
+  - name: get_contact
+    description: >
+      Returns ONE HubSpot contact: id, firstname, lastname, email, phone,
+      company, jobtitle, lifecyclestage, plus company_ids and deal_ids (the ids
+      of the linked companies and deals; an id can appear twice if the link
+      has several labels). Look up by the contact id from search_contacts, or
+      by email address with id_property = email. Use get_company and get_deal
+      for the linked records. Read-only.
+    params:
+      - name: contact
+        description: >
+          Required. The contact id from search_contacts — or the contact's
+          email address if id_property is email.
+        type: string
+        required: true
+      - name: id_property
+        description: >
+          Optional. Set to email when contact is an email address. Omit it
+          for a contact id.
+        type: string
+        enum: [email]
+    request:
+      method: GET
+      path: /crm/objects/2026-09/contacts/{contact}
+      query:
+        - name: properties
+          value: "firstname,lastname,email,phone,company,jobtitle,lifecyclestage"
+        - name: associations
+          value: "companies,deals"
+        - name: idProperty
+          value: "{id_property}"
+    response: >-
+      {id: id, firstname: properties.firstname, lastname: properties.lastname,
+      email: properties.email, phone: properties.phone,
+      company: properties.company, jobtitle: properties.jobtitle,
+      lifecyclestage: properties.lifecyclestage,
+      company_ids: associations.companies.results[*].id,
+      deal_ids: associations.deals.results[*].id}
+
+  - name: search_companies
+    description: >
+      Searches HubSpot companies whose name OR domain contains the search
+      term. Returns items (id, name, domain, city, country, industry, phone),
+      total (number of matches) and next_after. At most 50 companies per call;
+      if next_after is not null, call again with after = next_after for the
+      next page. Use the id with get_company or list_company_contacts.
+      Read-only.
+    params:
+      - name: q
+        description: >
+          Required. The search term, e.g. a part of the company name or its
+          web domain. Case-insensitive.
+        type: string
+        required: true
+      - name: after
+        description: >
+          Optional. Paging cursor: the number from next_after of the previous
+          answer. Omit it for the first page.
+        type: integer
+    request:
+      method: POST
+      path: /crm/objects/2026-09/companies/search
+      encoding: json
+      read_via_post: true
+      body_json:
+        filterGroups:
+          - filters:
+              - {propertyName: name, operator: CONTAINS_TOKEN, value: "*{q}*"}
+          - filters:
+              - {propertyName: domain, operator: CONTAINS_TOKEN, value: "*{q}*"}
+        properties: [name, domain, city, country, industry, phone]
+        limit: 50
+        after: "{after}"
+    response: >-
+      {items: results[*].{id: id, name: properties.name,
+      domain: properties.domain, city: properties.city,
+      country: properties.country, industry: properties.industry,
+      phone: properties.phone},
+      total: total, next_after: paging.next.after}
+
+  - name: get_company
+    description: >
+      Returns ONE HubSpot company by its id (from search_companies): id, name,
+      domain, city, country, industry, phone, plus deal_ids (the ids of the
+      linked deals; use get_deal for each). For the people of the company use
+      list_company_contacts. Read-only.
+    params:
+      - name: company_id
+        description: Required. The company id from search_companies.
+        type: string
+        required: true
+    request:
+      method: GET
+      path: /crm/objects/2026-09/companies/{company_id}
+      query:
+        - name: properties
+          value: "name,domain,city,country,industry,phone"
+        - name: associations
+          value: "deals"
+    response: >-
+      {id: id, name: properties.name, domain: properties.domain,
+      city: properties.city, country: properties.country,
+      industry: properties.industry, phone: properties.phone,
+      deal_ids: associations.deals.results[*].id}
+
+  - name: list_company_contacts
+    description: >
+      Lists the ids of the contacts linked to ONE company (company id from
+      search_companies or get_company). Returns contact_ids and next_after —
+      ids only, no names: call get_contact for each id you need. At most 50
+      ids per call; if next_after is not null, call again with after =
+      next_after. Read-only.
+    params:
+      - name: company_id
+        description: Required. The company id from search_companies or get_company.
+        type: string
+        required: true
+      - name: after
+        description: >
+          Optional. Paging cursor: the next_after value of the previous answer,
+          passed unchanged. Omit it for the first page.
+        type: string
+    request:
+      method: GET
+      path: /crm/objects/2026-09/companies/{company_id}/associations/contacts
+      query:
+        - name: limit
+          value: "50"
+        - name: after
+          value: "{after}"
+    response: "{contact_ids: results[*].toObjectId, next_after: paging.next.after}"
+
+  - name: list_deals
+    description: >
+      Lists HubSpot deals: items (id, dealname, amount,
+      deal_currency_code, dealstage, pipeline, closedate) and next_after.
+      dealstage and pipeline are internal ids, not names — resolve them with
+      list_deal_pipelines. There is no filter: page through with after. At most
+      50 deals per call; if next_after is not null, call again with after =
+      next_after. Use get_deal for the linked companies and contacts.
+      Read-only.
+    params:
+      - name: after
+        description: >
+          Optional. Paging cursor: the next_after value of the previous answer,
+          passed unchanged. Omit it for the first page.
+        type: string
+    request:
+      method: GET
+      path: /crm/objects/2026-09/deals
+      query:
+        - name: properties
+          value: "dealname,amount,deal_currency_code,dealstage,pipeline,closedate"
+        - name: limit
+          value: "50"
+        - name: after
+          value: "{after}"
+    response: >-
+      {items: results[*].{id: id, dealname: properties.dealname,
+      amount: properties.amount, deal_currency_code: properties.deal_currency_code,
+      dealstage: properties.dealstage, pipeline: properties.pipeline,
+      closedate: properties.closedate},
+      next_after: paging.next.after}
+
+  - name: get_deal
+    description: >
+      Returns ONE HubSpot deal by its id (from list_deals or a deal_ids list):
+      id, dealname, amount, deal_currency_code, dealstage, pipeline, closedate,
+      plus company_ids and contact_ids of the linked records. dealstage and
+      pipeline are internal ids, not names — resolve them with
+      list_deal_pipelines. Read-only.
+    params:
+      - name: deal_id
+        description: Required. The deal id from list_deals, get_contact or get_company.
+        type: string
+        required: true
+    request:
+      method: GET
+      path: /crm/objects/2026-09/deals/{deal_id}
+      query:
+        - name: properties
+          value: "dealname,amount,deal_currency_code,dealstage,pipeline,closedate"
+        - name: associations
+          value: "companies,contacts"
+    response: >-
+      {id: id, dealname: properties.dealname, amount: properties.amount,
+      deal_currency_code: properties.deal_currency_code,
+      dealstage: properties.dealstage, pipeline: properties.pipeline,
+      closedate: properties.closedate,
+      company_ids: associations.companies.results[*].id,
+      contact_ids: associations.contacts.results[*].id}
+
+  - name: list_deal_pipelines
+    description: >
+      Lists the deal pipelines with their stages: per pipeline id and label,
+      per stage id, label, display_order and probability (0.0 = closed lost,
+      1.0 = closed won). Use it to translate the dealstage and pipeline ids of
+      list_deals and get_deal into names. Also the health check of this
+      integration: HTTP 401 means the token is wrong or expired, HTTP 403
+      means the private app lacks a scope. Read-only.
+    # Probe für `jnpt connector check` — parameterlos, braucht nur
+    # crm.objects.deals.read.
+    check: true
+    request:
+      method: GET
+      path: /crm/pipelines/2026-09/deals
+    response: >-
+      {pipelines: results[*].{id: id, label: label,
+      stages: stages[*].{id: id, label: label, display_order: displayOrder,
+      probability: metadata.probability}}}

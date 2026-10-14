@@ -12,7 +12,7 @@ Fall ist der **GitHub-MCP-Server**.
 > und dessen Tools weiterreicht. Die **Gegenrichtung** — wie ein fremder
 > MCP-**Client** (n8n, ein eigener Agent, ein Skript) an JanuaPorts `/mcp`
 > andockt — steht in
-> `docs/mcp-client-anbindung.md` (Produkt-Doku, nicht öffentlich): Endpunkt,
+> (Produkt-Doku, nicht öffentlich): Endpunkt,
 > Bearer-Token, Scope-Vergabe und die drei Fußangeln für automatisierte
 > Clients (keine Bestätigung, kein Auto-Retry bei Writes, jeder Token zählt
 > als Zugang).
@@ -117,7 +117,7 @@ write_tools:
 ```
 
 Verhalten schreibender Upstream-Tools (überträgt die
-#58-Write-Semantik (Produkt-Doku, nicht öffentlich) auf den Proxy):
+Write-Semantik (Produkt-Doku, nicht öffentlich) auf den Proxy):
 
 - **Tool-genauer Scope Pflicht.** Ein Write-Tool wird von einem **instanz-weiten**
   Scope (`github`) **nicht** erfasst — es verlangt `github:create_issue`. „Gib dem

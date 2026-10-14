@@ -226,20 +226,32 @@ auth:
   client_id: "<client-id>"
 ```
 
-Und die **Site-Adresse** an **zwei** Stellen — im Pfad von `get_site` und im
-Pfad von `list_libraries`:
+Seit Vorlage 2.0.0 wird die in Schritt 6.1 einmalig mit
+`GET /sites/{host}:/sites/{pfad}` ermittelte **Site-ID** als Anlagenwert gesetzt.
+Die Antwort enthält `id` in der Form `host,guid,guid`. Die Adressform mit `/`
+ist kein erlaubtes `segment`.
 
 ```yaml
-    path: "/v1.0/sites/contoso.sharepoint.com:/sites/Belegablage"
-    path: "/v1.0/sites/contoso.sharepoint.com:/sites/Belegablage:/drives"
+instance:
+  - name: site_id
+    label: SharePoint-Site-ID
+    kind: segment
+    example: contoso.sharepoint.com,guid,guid
+    value: "<host>,<guid>,<guid>" # die vollständige id aus Schritt 6.1
 ```
 
-Ersetze `contoso.sharepoint.com` durch deinen SharePoint-Host und
-`/sites/Belegablage` durch den server-relativen Pfad deiner Site. Der
-**abschließende** Doppelpunkt in der zweiten Zeile gehört zur Adressierung und
-bleibt stehen. Wer lieber die in Schritt 6.1 ermittelte **Site-ID** einsetzt:
-Sie passt an dieselbe Stelle, dann entfällt in `list_libraries` der abschließende
-Doppelpunkt (`/v1.0/sites/<siteId>/drives`).
+Die beiden Pfade bleiben `/v1.0/sites/{{instance.site_id}}` und
+`/v1.0/sites/{{instance.site_id}}/drives`. Der Loader ersetzt die Marken.
+Bei einer Altinstanz wird kein Pfadwert geraten:
+`jnpt connector upgrade --wert site_id=<site-id> --yes microsoft-graph-sharepoint`.
+Danach übernehmen DB-, Datei- und Auto-Anhebung den vorhandenen Wert nach Namen,
+ohne ihn still zu ändern. Fehlende Werte brechen ab, Auto erhält den alten Stand
+und protokolliert/auditiert den Grund. Verwaltungs-API bei Anlage/Anhebung:
+`instance: {site_id: "<site-id>"}`. Teams benötigen dafür Stufe 2; Admin-MCP setzt
+keine Werte. Die Oberfläche fragt die Site-ID bei Anlage und fehlendem Wert beim
+Vorlagen-Update ab; der Pfadumstieg bleibt MAJOR.
+Stufe 1 „Sicher verbinden“: neue Fassung
+gebaut, live nicht belegt; bisherige Live-Belege betreffen die frühere Adressform.
 
 Danach laden — entweder die Datei ins Connector-Verzeichnis legen (Default
 `/data/connectors`) oder zur Laufzeit:

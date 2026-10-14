@@ -1,0 +1,363 @@
+# WooCommerce REST API v3 — Produkte, Varianten, Bestellungen, Kunden
+# und Berichte lesen. Read-only, nur GET.
+#
+# API: https://<shop>/wp-json/wc/v3/<ressource>
+# Doku: https://woocommerce.github.io/woocommerce-rest-api-docs/
+# (Authentication, Pagination, Products, Product variations,
+# Orders, Customers, Reports, Data — geprüft 30.09.2026)
+# WP-REST-Handbuch: _fields (Global Parameters) und Pagination
+# https://developer.wordpress.org/rest-api/
+# Quelltext: github.com/woocommerce/woocommerce, trunk — geprüft 30.09.2026:
+# includes/class-wc-rest-authentication.php (Basic nur bei
+# is_ssl, sonst OAuth 1.0a; Read-Key bei POST/PUT/DELETE → 401
+# „does not have write permissions")
+# includes/rest-api/Controllers/Version3/class-wc-rest-crud-controller.php
+# (page, per_page ≤ 100, search, after/before, include)
+# Version3/…orders-controller.php, Version2/…orders-v2-controller.php
+# (status, customer), Version1/…customers-v1-controller.php
+# (search, email, role, include), Version1/…report-sales-v1-controller.php
+# (period, date_min, date_max), Version3/…data-currencies-controller.php
+# Anleitung: (Produkt-Doku, nicht öffentlich) (Key anlegen, eigener Benutzer mit
+# Rolle Shop-Manager, Pretty Permalinks, HTTPS/Reverse Proxy)
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE. Shopspezifisch ist nur der Host in
+# `base_url` (`shop.example.com` ersetzen, `/wp-json` bleibt). Der API-Schlüssel
+# steht NIE hier, sondern nur im Vault unter dem Namen "woocommerce" — und zwar
+# als base64("ck_…:cs_…"), denn `auth.template` setzt den Wert unverändert hinter
+# „Basic ". Einzeilig kodieren, sonst bricht der Wert nach 76 Zeichen um:
+# printf '%s' 'ck_…:cs_…' | base64 -w0 | jnpt credential set --name woocommerce
+#
+# ⚠️ NUR HTTPS. WooCommerce wertet Basic-Auth nur aus, wenn is_ssl wahr ist.
+# Über HTTP verlangt es eine OAuth-1.0a-Signatur je Request — die geht mit
+# `auth.template` nicht und wird nicht unterstützt. Query-Auth
+# (`consumer_key=…&consumer_secret=…`) nutzen wir bewusst NICHT: der Schlüssel
+# stünde in der URL und damit in Proxy- und Server-Logs. Kein `?rest_route=`:
+# Pretty Permalinks sind Pflicht (Anleitung).
+#
+# RECHTE: Der Key trägt die Berechtigung `read` (Schreibversuche → 401) UND die
+# WordPress-Rechte seines Benutzers. Die Rolle `shop_manager` reicht für alle
+# sieben Werkzeuge (Kunden, Berichte, check); ein Key eines `customer` bekommt
+# 403. WooCommerce kennt KEINE Rechte auf Feldebene — die Minimierung unten ist
+# reine Spec-Disziplin, bewacht von (Produkt-Doku, nicht öffentlich)
+#
+# FORMAT-REGELN DES SCHNITTS:
+# * `per_page` steht KONSTANT auf 25; geblättert wird über `page`. Die Runtime
+# liest keine Antwort-Header, X-WP-Total kommt also nicht an. Deshalb
+# liefert jede Listen-Projektion `count`, und die Beschreibung sagt:
+# 25 → page+1, weniger → letzte Seite.
+# * `_fields` ist EINE feste Komma-Liste in einem Query-Wert (die Runtime setzt
+# per url.Values.Set, ein Name gilt einmal). Nicht gelistete Felder verlassen
+# den Shop gar nicht erst. Verschachteltes `_fields` (`a.b`) wirkt auf
+# Objekte, nicht auf Listenelemente — get_order fordert line_items,
+# shipping_lines und refunds deshalb GANZ an und beschneidet in der
+# Projektion.
+# * Die `response`-Projektion ist die ZWEITE Whitelist: Was dort nicht steht,
+# erreicht die KI nicht — auch wenn ein Shop (Plugin, andere Version) mehr
+# schickt, als `_fields` verlangt.
+# * Datumsfilter der Bestellungen: `from`/`to` (YYYY-MM-DD) werden zu
+# `after={from}T00:00:00` und `before={to}T23:59:59`. Fehlt der Parameter,
+# fällt der ganze Query-Wert weg. Ohne Zonenangabe und mit
+# dates_are_gmt=false (Default) gilt die Zeitzone des Shops (live belegt
+# 30.09.2026: after=06:30 traf 06:56 Shopzeit = 04:56 UTC).
+# * Der Verkaufsbericht (reports/sales) läuft über WC_Admin_Report und dessen
+# Transient-Cache: Eine eben angelegte Bestellung fehlte live, bis der Cache
+# geleert war. Mit HPOS (auch ohne Kompatibilitätsmodus) zählt er richtig.
+# * Preise und Summen liefert WooCommerce als Strings ("19.99").
+#
+# DATENSCHUTZ, feldgenau:
+# * Nie in einer Antwort: billing und shipping (Adressen, Telefon, E-Mail des
+# Bestellers) — einzige Ausnahme billing.company bei search_customers —,
+# customer_ip_address, customer_user_agent, customer_note, meta_data (kann
+# Personalisierungen wie Gravurtexte tragen), refunds[].reason (Freitext),
+# username und avatar_url (Gravatar-Hash der E-Mail-Adresse).
+# * Bestellungen nennen vom Besteller NUR customer_id; Gastbestellungen haben 0.
+# search_orders hat deshalb kein `search`: Es durchsuchte Namen und Adressen.
+# * search_customers liefert Name, E-Mail und Firma — der Zweck des Werkzeugs.
+# * Suchbegriff, E-Mail und Kundennummer stehen in `redact_params` und
+# erscheinen im Audit nur redigiert.
+#
+# PRIVACY: bewusst KEIN `privacy:`-Block in der Vorlage. Welche Kundenfelder
+# pseudonymisiert gehören, entscheidet der Betreiber. Vorlage zum Ergänzen am
+# Werkzeug search_customers (Format: docs/connector-spec.md, Abschnitt Privacy):
+#
+# privacy:
+# read:
+# - {field: email, label: email}
+# - {field: first_name, label: name}
+# - {field: last_name, label: name}
+# - {field: company, label: firma}
+#
+# RATE LIMITS: Die REST API v3 nennt keine festen Grenzen (anders als die Store
+# API). `min_interval: 200ms` ist eine konservative Selbstbremse, keine Zusage.
+#
+# BEWUSST NICHT DRIN: kein Schreiben, kein OAuth 1.0a über
+# HTTP, keine Query-Auth, kein `?rest_route=`, keine Freitextsuche über
+# Bestellungen, keine Adressen, keine Webhooks.
+
+name: woocommerce
+# Fassung dieser Vorlage — siehe demo-erp.yaml für die Bedeutung.
+version: "1.0.0"
+description: >
+  WooCommerce shop via the REST API v3, read-only: search products (stock,
+  price) and variations, orders, one order with its line items, customers and
+  the sales report. Every list returns at most 25 records per call and pages
+  with page. Prices and totals are strings.
+# PLATZHALTER — durch die eigene Shop-Adresse ersetzen (https://…/wp-json).
+base_url: https://shop.example.com/wp-json
+
+auth:
+  header: Authorization
+  template: "Basic {{credential}}"
+  # Vault-Name des Werts base64("ck_…:cs_…") (jnpt credential set --name woocommerce).
+  credential: woocommerce
+
+timeout: 30s
+min_interval: 200ms
+
+redact_params: [customer_query, email, customer_id]
+
+tools:
+  - name: check
+    description: >
+      Health check: returns the shop currency (code, name, symbol). Changes
+      nothing. Use it first when calls fail: HTTP 401 means the API key is
+      wrong, revoked or sent over plain HTTP; HTTP 403 means the key's user
+      lacks the shop manager rights; HTTP 404 means the permalinks are not
+      set or WooCommerce is not active.
+    # Probe für `jnpt connector check` — parameterlos, braucht manage_woocommerce.
+    check: true
+    request:
+      method: GET
+      path: /wc/v3/data/currencies/current
+    response: "{currency: code, name: name, symbol: symbol}"
+
+  - name: search_products
+    description: >
+      Searches products. Returns count and per product: id, name, sku, type
+      (simple, variable, grouped, external), status, price, regular_price,
+      sale_price (all strings, sale_price empty without a sale), stock_status
+      and stock_quantity (null when stock is not managed). For a variable
+      product use list_product_variations. All filters are optional and
+      combined with AND. At most 25 per call. If count is 25, call again with
+      page+1; fewer means last page. Read-only.
+    params:
+      - name: q
+        description: Optional. Search term (matches product name and description).
+        type: string
+      - name: sku
+        description: Optional. Exact SKU; several SKUs separated by commas.
+        type: string
+      - name: stock_status
+        description: Optional. Stock status.
+        type: string
+        enum: [instock, outofstock, onbackorder]
+      - name: product_id
+        description: Optional. Exactly this product id.
+        type: integer
+      - name: page
+        description: Optional. Page number, starting at 1 (25 records per page).
+        type: integer
+    request:
+      method: GET
+      path: /wc/v3/products
+      query:
+        - {name: per_page, value: "25"}
+        - {name: page, value: "{page}"}
+        - {name: search, value: "{q}"}
+        - {name: sku, value: "{sku}"}
+        - {name: stock_status, value: "{stock_status}"}
+        - {name: include, value: "{product_id}"}
+        - {name: _fields, value: "id,name,sku,type,status,price,regular_price,sale_price,stock_status,stock_quantity"}
+    response: >-
+      {count: length(@), products: [*].{id: id, name: name, sku: sku,
+      type: type, status: status, price: price,
+      regular_price: regular_price, sale_price: sale_price,
+      stock_status: stock_status, stock_quantity: stock_quantity}}
+
+  - name: list_product_variations
+    description: >
+      Lists the variations of ONE variable product. Returns count and per
+      variation: id, sku, status, price, regular_price, sale_price (strings),
+      stock_status, stock_quantity and attributes (name and chosen option,
+      e.g. Size: L). At most 25 per call. If count is 25, call again with
+      page+1; fewer means last page. Read-only.
+    params:
+      - name: product_id
+        description: Required. The id of the variable product (from search_products).
+        type: integer
+        required: true
+      - name: stock_status
+        description: Optional. Stock status.
+        type: string
+        enum: [instock, outofstock, onbackorder]
+      - name: page
+        description: Optional. Page number, starting at 1 (25 records per page).
+        type: integer
+    request:
+      method: GET
+      path: /wc/v3/products/{product_id}/variations
+      query:
+        - {name: per_page, value: "25"}
+        - {name: page, value: "{page}"}
+        - {name: stock_status, value: "{stock_status}"}
+        - {name: _fields, value: "id,sku,status,price,regular_price,sale_price,stock_status,stock_quantity,attributes"}
+    response: >-
+      {count: length(@), variations: [*].{id: id, sku: sku, status: status,
+      price: price, regular_price: regular_price, sale_price: sale_price,
+      stock_status: stock_status, stock_quantity: stock_quantity,
+      attributes: attributes[*].{name: name, option: option}}}
+
+  - name: search_orders
+    description: >
+      Searches orders, newest first. Returns count and per order: id, number,
+      status, date_created (shop time zone), currency, total, total_tax,
+      shipping_total, discount_total (strings), payment_method_title and
+      customer_id. customer_id is 0 for a guest order. It never returns the
+      buyer's name, e-mail or address. All filters are optional and combined
+      with AND. At most 25 per call. If count is 25, call again with page+1;
+      fewer means last page. Use get_order for line items. Read-only.
+    params:
+      - name: status
+        description: Optional. Order status.
+        type: string
+        enum: [pending, processing, on-hold, completed, cancelled, refunded, failed]
+      - name: from
+        description: Optional. Only orders created on or after this day, YYYY-MM-DD (shop time zone).
+        type: string
+      - name: to
+        description: Optional. Only orders created on or before this day, YYYY-MM-DD (shop time zone).
+        type: string
+      - name: customer_id
+        description: Optional. Only orders of this registered customer (id from search_customers). Guest orders cannot be filtered.
+        type: integer
+      - name: page
+        description: Optional. Page number, starting at 1 (25 records per page).
+        type: integer
+    request:
+      method: GET
+      path: /wc/v3/orders
+      query:
+        - {name: per_page, value: "25"}
+        - {name: page, value: "{page}"}
+        - {name: status, value: "{status}"}
+        - {name: after, value: "{from}T00:00:00"}
+        - {name: before, value: "{to}T23:59:59"}
+        - {name: customer, value: "{customer_id}"}
+        - {name: _fields, value: "id,number,status,date_created,currency,total,total_tax,shipping_total,discount_total,customer_id,payment_method_title"}
+    response: >-
+      {count: length(@), orders: [*].{id: id, number: number, status: status,
+      date_created: date_created, currency: currency, total: total,
+      total_tax: total_tax, shipping_total: shipping_total,
+      discount_total: discount_total,
+      payment_method_title: payment_method_title, customer_id: customer_id}}
+
+  - name: get_order
+    description: >
+      Reads ONE order with its line items, shipping lines and refunds. Returns
+      id, number, status, date_created, date_paid, date_completed, currency,
+      total, total_tax, shipping_total, discount_total (strings),
+      payment_method_title, customer_id (0 for a guest order), line_items
+      (id, name, product_id, variation_id, sku, quantity, price as number,
+      subtotal and total as strings), shipping_lines (method_id,
+      method_title, total) and refunds (id, total as negative string). No
+      buyer name, e-mail or address, no notes, no refund reasons. Read-only.
+    params:
+      - name: order_id
+        description: Required. The order id from search_orders.
+        type: integer
+        required: true
+    request:
+      method: GET
+      path: /wc/v3/orders/{order_id}
+      query:
+        # Positionen, Versand und Erstattungen GANZ: verschachteltes _fields
+        # wirkt nicht auf Listenelemente, beschnitten wird in der Projektion.
+        - {name: _fields, value: "id,number,status,date_created,date_paid,date_completed,currency,total,total_tax,shipping_total,discount_total,customer_id,payment_method_title,line_items,shipping_lines,refunds"}
+    response: >-
+      {id: id, number: number, status: status, date_created: date_created,
+      date_paid: date_paid, date_completed: date_completed,
+      currency: currency, total: total, total_tax: total_tax,
+      shipping_total: shipping_total, discount_total: discount_total,
+      payment_method_title: payment_method_title, customer_id: customer_id,
+      line_items: line_items[*].{id: id, name: name, product_id: product_id,
+      variation_id: variation_id, sku: sku, quantity: quantity, price: price,
+      subtotal: subtotal, total: total},
+      shipping_lines: shipping_lines[*].{method_id: method_id,
+      method_title: method_title, total: total},
+      refunds: refunds[*].{id: id, total: total}}
+
+  - name: search_customers
+    description: >
+      Searches registered customers (role customer). Returns count and per
+      customer: id, email, first_name, last_name, company, date_created and
+      is_paying_customer. No postal address, no phone number. Guest buyers
+      are not customers and are not found here. All filters are optional; if
+      email is set, it replaces customer_query. At most 25 per call. If count
+      is 25, call again with page+1; fewer means last page. Read-only.
+    params:
+      - name: customer_query
+        description: Optional. Search term (name, e-mail, login name).
+        type: string
+      - name: email
+        description: Optional. Exact e-mail address.
+        type: string
+      - name: customer_id
+        description: Optional. Exactly this customer id, e.g. from search_orders.
+        type: integer
+      - name: page
+        description: Optional. Page number, starting at 1 (25 records per page).
+        type: integer
+    request:
+      method: GET
+      path: /wc/v3/customers
+      query:
+        - {name: per_page, value: "25"}
+        - {name: page, value: "{page}"}
+        - {name: role, value: customer}
+        - {name: search, value: "{customer_query}"}
+        - {name: email, value: "{email}"}
+        - {name: include, value: "{customer_id}"}
+        # billing.company ist die EINZIGE Ausnahme aus billing (Firma des Kunden).
+        - {name: _fields, value: "id,date_created,email,first_name,last_name,billing.company,is_paying_customer"}
+    response: >-
+      {count: length(@), customers: [*].{id: id, email: email,
+      first_name: first_name, last_name: last_name, company: billing.company,
+      date_created: date_created, is_paying_customer: is_paying_customer}}
+
+  - name: get_sales_report
+    description: >
+      Sales report of the shop: total_sales, net_sales, average_sales,
+      total_orders, total_items, total_tax, total_shipping, total_refunds,
+      total_discount, totals_grouped_by (day or month) and totals per day or
+      month (sales, orders, items, tax, shipping, discount, customers,
+      refunds). Amounts are strings. Either give period, or a date range with
+      from and to; with neither, the report covers today. period wins over
+      from and to. WooCommerce serves this report from its cache, so an order
+      placed minutes ago may be missing; search_orders is always current.
+      Read-only.
+    params:
+      - name: period
+        description: Optional. week (last 7 days), month (this month), last_month or year (this year).
+        type: string
+        enum: [week, month, last_month, year]
+      - name: from
+        description: Optional. First day of the range, YYYY-MM-DD.
+        type: string
+      - name: to
+        description: Optional. Last day of the range, YYYY-MM-DD.
+        type: string
+    request:
+      method: GET
+      path: /wc/v3/reports/sales
+      query:
+        - {name: period, value: "{period}"}
+        - {name: date_min, value: "{from}"}
+        - {name: date_max, value: "{to}"}
+        - {name: _fields, value: "total_sales,net_sales,average_sales,total_orders,total_items,total_tax,total_shipping,total_refunds,total_discount,totals_grouped_by,totals"}
+    response: >-
+      [0].{total_sales: total_sales, net_sales: net_sales,
+      average_sales: average_sales, total_orders: total_orders,
+      total_items: total_items, total_tax: total_tax,
+      total_shipping: total_shipping, total_refunds: total_refunds,
+      total_discount: total_discount, totals_grouped_by: totals_grouped_by,
+      totals: totals}

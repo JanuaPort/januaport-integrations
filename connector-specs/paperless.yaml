@@ -1,0 +1,364 @@
+# Paperless-ngx über die REST-API — Dokumente, Korrespondenten, Dokumenttypen
+# und Tags lesen. Nur Metadaten: kein Dokumenttext, keine Dateien,
+# kein Download und kein Schreiben.
+#
+# API: /api/… (Django REST Framework), JSON
+# Doku: docs/api.md im Quelltext github.com/paperless-ngx/paperless-ngx,
+# Tag v3.2.1 (docs.paperless-ngx.com antwortete 403 — geprüft
+# 30.09.2026). Filternamen, Sortierfelder und der Umgang mit
+# `fields` stammen aus src/documents/filters.py, views.py und
+# serialisers.py desselben Tags, NICHT aus der Doku.
+# Anleitung: (Produkt-Doku, nicht öffentlich) (Lese-Nutzer mit vier view-Rechten,
+# Token in den Vault, Besitz und Freigaben, PAPERLESS_ALLOWED_HOSTS)
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE. `base_url` ist ein Platzhalter
+# (`paperless.example.com`) — vor dem Einsatz durch die eigene Adresse ersetzen.
+# Das TOKEN steht NIE hier, sondern nur im Vault unter dem Namen "paperless".
+#
+# ⚠️ KEIN DOKUMENTTEXT — Leitplanke 5 (Produkt-Doku, nicht öffentlich) in der
+# Größe eines ganzen Archivs. Ein DMS ist die Rohquelle genau der Namen und
+# Adressen, die andere Integrationen pseudonymisieren; `scan` hat kein Muster
+# für Namen und Adressen, und ein roher Text hebt das Namens-Pseudonym für den
+# ganzen Mandanten auf (dazu Art.-9-Daten: Arztbriefe, Lohn). Deshalb:
+# * `content` (der volle OCR-Text) kommt in keiner Feldliste und keiner
+# Projektion vor. Paperless liefert ihn in JEDER Dokument-Antwort mit, wenn
+# kein `fields=` gesetzt ist — `fields` ist darum an jedem Dokument-Werkzeug
+# ein festes Literal und nie ein Parameter.
+# * `notes` (Freitext-Notizen der Nutzer) ebenso wenig — derselbe Grund.
+# * `__search_hit__` hängt die Volltextsuche TROTZ `fields=` an; sein
+# `highlights` ist ein Textauszug. Die Projektion (eine Whitelist) schneidet
+# ihn ab — jede Antwort hier ist eine explizite Projektion.
+# * Ebenfalls nie: `custom_fields`, `owner`, `permissions`, die Dateinamen
+# (`original_file_name` trägt oft Personennamen), `storage_path`, und bei
+# Korrespondenten/Typen/Tags die Zuordnungsregel `match` (enthält oft eine
+# IBAN).
+# * Keine Inhalts-Filter (`content__*`), keine weiteren Suchmodi (`search`,
+# `query`, `title_search`, `more_like_id`), kein `custom_field_query`, kein
+# `full_perms`/`truncate_content`, kein Pfad auf `autocomplete` (ein
+# Wortschatz-Orakel über alle Texte), `download`, `preview`, `thumb`,
+# `notes` oder `/api/search/`.
+# Ein Werkzeug für den Text (`read_document_text`) gibt es nur als eigene Story
+# mit PO- und SEC-Entscheid.
+#
+# ⚠️ DIE VOLLTEXTSUCHE IST EINE SONDE — und das sagt ihre Beschreibung. Sie
+# liefert nur Metadaten, aber ein Treffer verrät, dass Titel oder Dokumenttext
+# die Suchworte enthält. Wer `search_documents` vergibt, vergibt diese Auskunft.
+#
+# WARUM `text` UND NICHT `query`:
+# `query` ist die Suche MIT Syntax, und die kennt Feld-Präfixe
+# (src/documents/search/_fields.py, PUBLIC_FIELDS, v3.2.1): `notes.note:` und
+# `notes.user:` (Notiztext und WER eine Notiz geschrieben hat — eine Sonde auf
+# Aktivität je Person, Leitplanke 1), `custom_fields.value:`,
+# `original_filename:`, `storage_path:`, `checksum:` (belegt, ob eine bestimmte
+# Datei im Archiv liegt). Die Beschreibung „Titel und Text" wäre damit falsch.
+# `text` ist die einfache Suche (views.py `_get_tantivy_query_and_mode` →
+# SearchMode.TEXT → _query.py `parse_simple_text_query`): Sie zerlegt die
+# Eingabe in Wörter, escaped jedes als Regex-Literal und verlangt JEDES Wort als
+# Teilstring in `simple_title` oder `simple_content` — keine Feld-Präfixe,
+# keine Operatoren, keine Phrasen. Der Preis: keine Such-Syntax. NICHT
+# `title_content` nehmen — in v3.2.1 als veraltet markiert („use `text`").
+#
+# ENVELOPE-ABGLEICH gegen Quelltext/Doku:
+# * `Authorization: Token <token>` — DRF TokenAuthentication; die Runtime setzt
+# ihn aus `auth.template`. Das Token hat weder Ablauf noch Scopes: Es trägt
+# ALLE Rechte seines Nutzers. Der Lese-Nutzer (vier view-Rechte, s.
+# Anleitung) ist deshalb die eigentliche Grenze.
+# * `Accept: application/json; version=10` — fest. Ohne Angabe liefert
+# Paperless die konfigurierte Standardversion, und die wandert mit jedem
+# Update; v9 bläht Listen zusätzlich mit `all` auf. Version 10 gibt es ab
+# Paperless 3.0 (Hinweis für 2.x in der Anleitung).
+# * JEDER Pfad endet auf `/`. Ohne leitet Django weiter (Befund aus dem
+# Quelltext: 301; live gegen 3.2.1: 302 auf die Anmeldeseite), und die
+# Runtime folgt keinen Weiterleitungen.
+# * Kein Body, kein `Content-Type` — alle sechs Werkzeuge sind GET.
+#
+# FILTER: Paperless IGNORIERT UNBEKANNTE FILTER STILL. Jeder Name hier ist gegen
+# filters.py (v3.2.1) geprüft, die Wirkung jedes Filters im Live-Beleg.
+# Seiten: `page_size=50` fest, geblättert wird mit `page`. Eine Seite hinter
+# der letzten beantwortet Paperless mit 404 (live 30.09.2026) — das steht in
+# jeder `page`-Beschreibung, weil Fehlertexte den Agenten nicht erreichen.
+#
+# RATE LIMITS: Paperless nennt keine. `min_interval: 250ms` ist eine
+# Selbstbremse (~4 Aufrufe/s) für eine selbst gehostete Instanz.
+#
+# PRIVACY: bewusst KEIN `privacy:`-Block in der Vorlage — der Betreiber
+# entscheidet. Titel tragen oft Personennamen („Gehaltsabrechnung Erika
+# Musterfrau"), die kein Muster findet; `scan` fängt dort nur strukturierte
+# Werte. Vorlage zum Ergänzen (Format: docs/connector-spec.md, Abschnitt
+# Privacy):
+#
+# list_documents / search_documents / get_document:
+# privacy:
+# scan:
+# - {field: title, patterns: [iban, email, steuernummer, telefon]}
+# list_correspondents:
+# privacy:
+# read:
+# - {field: name, label: name}
+#
+# `redact_params`: Suchworte und Namensteile sind Freitext und gehören nicht
+# ins Audit.
+
+name: paperless
+# Fassung dieser Vorlage — siehe demo-erp.yaml für die Bedeutung.
+version: "1.0.0"
+description: >
+  Paperless-ngx document archive, read-only and metadata only; never returns
+  document content, files or download links. List and filter documents by
+  title, correspondent, document type, tag, date and archive serial number;
+  full-text search that answers with metadata; look up correspondents,
+  document types and tags. At most 50 entries per call, paged with page.
+# PLATZHALTER — durch die eigene Paperless-Adresse ersetzen (https://…; im
+# selben Docker-Netz auch http://<dienstname>:8000, siehe Anleitung).
+base_url: https://paperless.example.com
+
+auth:
+  header: Authorization
+  template: "Token {{credential}}"
+  # Vault-Name des API-Tokens des Lese-Nutzers (jnpt credential set --name paperless).
+  credential: paperless
+
+headers:
+  Accept: "application/json; version=10"
+
+timeout: 30s
+min_interval: 250ms
+
+redact_params: [q, title_contains, name_contains]
+
+tools:
+  - name: list_documents
+    description: >
+      Lists documents, newest first unless ordered otherwise. Returns count
+      (total matches), has_more (true if another page exists) and per document:
+      id, title, correspondent (id), document_type (id), tags (ids), created
+      (document date, YYYY-MM-DD), added (when it entered the archive),
+      archive_serial_number, page_count and mime_type. Metadata only — never
+      the document text. Resolve ids with list_correspondents,
+      list_document_types and list_tags. All filters are optional and combined
+      with AND. 50 documents per page; if has_more is true, call again with
+      page 2, 3, … Read-only. Also the health check of this integration.
+    # Probe für `jnpt connector check` — ohne Pflichtparameter.
+    check: true
+    params:
+      - name: title_contains
+        description: Optional. Part of the title, case-insensitive.
+        type: string
+      - name: correspondent_id
+        description: Optional. Correspondent id from list_correspondents.
+        type: integer
+      - name: document_type_id
+        description: Optional. Document type id from list_document_types.
+        type: integer
+      - name: tag_id
+        description: Optional. Tag id from list_tags; only documents carrying this tag.
+        type: integer
+      - name: created_from
+        description: Optional. Earliest document date to include, format YYYY-MM-DD (inclusive).
+        type: string
+      - name: created_to
+        description: Optional. Latest document date to include, format YYYY-MM-DD (inclusive).
+        type: string
+      - name: asn
+        description: Optional. Archive serial number (exact).
+        type: integer
+      - name: ordering
+        description: >
+          Optional. Sort field; a leading minus sorts descending. Default is
+          -created (newest document date first).
+        type: string
+        enum: [created, -created, added, -added, title, -title, archive_serial_number, -archive_serial_number]
+      - name: page
+        description: >
+          Optional. Page number, starting at 1. A page past the last one
+          answers with HTTP 404 — stop paging when has_more is false.
+        type: integer
+    request:
+      method: GET
+      path: /api/documents/
+      query:
+        # Feste Feldliste — ohne sie käme der volle OCR-Text (`content`) mit.
+        - name: fields
+          value: "id,title,correspondent,document_type,tags,created,added,archive_serial_number,page_count,mime_type"
+        - name: page_size
+          value: "50"
+        - name: page
+          value: "{page}"
+        - name: title__icontains
+          value: "{title_contains}"
+        - name: correspondent__id
+          value: "{correspondent_id}"
+        - name: document_type__id
+          value: "{document_type_id}"
+        - name: tags__id__all
+          value: "{tag_id}"
+        - name: created__gte
+          value: "{created_from}"
+        - name: created__lte
+          value: "{created_to}"
+        - name: archive_serial_number
+          value: "{asn}"
+        - name: ordering
+          value: "{ordering}"
+    response: >-
+      {count: count, has_more: next != `null`,
+      documents: results[*].{id: id, title: title, correspondent: correspondent,
+      document_type: document_type, tags: tags, created: created, added: added,
+      archive_serial_number: archive_serial_number, page_count: page_count,
+      mime_type: mime_type}}
+
+  - name: search_documents
+    description: >
+      Simple full-text search over title and document text: every word of q
+      must occur (also as part of a longer word) in the title or the text,
+      case-insensitive. No search syntax — no field prefixes, operators or
+      phrases; they are searched as plain words. Returns the same metadata as
+      list_documents, best match first: count, has_more and per document id,
+      title, correspondent, document_type, tags, created, added,
+      archive_serial_number, page_count and mime_type. This tool never returns
+      the text, no excerpt and no highlight. Be aware what it does reveal:
+      a match reveals that the title or the document text contains the search
+      words. 50 documents per page; page with page. Read-only.
+    params:
+      - name: q
+        description: Required. Search words, e.g. an invoice number or a name.
+        type: string
+        required: true
+      - name: page
+        description: >
+          Optional. Page number, starting at 1. A page past the last one
+          answers with HTTP 404 — stop paging when has_more is false.
+        type: integer
+    request:
+      method: GET
+      path: /api/documents/
+      query:
+        - name: fields
+          value: "id,title,correspondent,document_type,tags,created,added,archive_serial_number,page_count,mime_type"
+        - name: page_size
+          value: "50"
+        - name: page
+          value: "{page}"
+        # `text`, nie `query` — s. Kopf (Feld-Syntax erreicht Notizen samt Autor).
+        - name: text
+          value: "{q}"
+    # Die Whitelist lässt `__search_hit__` (Textauszug) weg — s. Kopf.
+    response: >-
+      {count: count, has_more: next != `null`,
+      documents: results[*].{id: id, title: title, correspondent: correspondent,
+      document_type: document_type, tags: tags, created: created, added: added,
+      archive_serial_number: archive_serial_number, page_count: page_count,
+      mime_type: mime_type}}
+
+  - name: get_document
+    description: >
+      Returns the metadata of ONE document by id: id, title, correspondent
+      (id), document_type (id), tags (ids), created, added,
+      archive_serial_number, page_count and mime_type. Never the document
+      text, no file and no download link. HTTP 404 means the document does not
+      exist or this integration may not see it. Read-only.
+    params:
+      - name: id
+        description: Required. Document id from list_documents or search_documents.
+        type: integer
+        required: true
+    request:
+      method: GET
+      path: /api/documents/{id}/
+      query:
+        - name: fields
+          value: "id,title,correspondent,document_type,tags,created,added,archive_serial_number,page_count,mime_type"
+    response: >-
+      {id: id, title: title, correspondent: correspondent,
+      document_type: document_type, tags: tags, created: created, added: added,
+      archive_serial_number: archive_serial_number, page_count: page_count,
+      mime_type: mime_type}
+
+  - name: list_correspondents
+    description: >
+      Lists correspondents (senders and recipients of documents), sorted by
+      name. Returns count, has_more and per correspondent: id, name and
+      document_count. Use the id as correspondent_id in list_documents.
+      50 per page; page with page. Read-only.
+    # Ohne `match`: die Zuordnungsregel enthält oft eine IBAN oder Namen.
+    params:
+      - name: name_contains
+        description: Optional. Part of the name, case-insensitive.
+        type: string
+      - name: page
+        description: >
+          Optional. Page number, starting at 1. A page past the last one
+          answers with HTTP 404 — stop paging when has_more is false.
+        type: integer
+    request:
+      method: GET
+      path: /api/correspondents/
+      query:
+        - name: page_size
+          value: "50"
+        - name: page
+          value: "{page}"
+        - name: name__icontains
+          value: "{name_contains}"
+    response: >-
+      {count: count, has_more: next != `null`,
+      correspondents: results[*].{id: id, name: name, document_count: document_count}}
+
+  - name: list_document_types
+    description: >
+      Lists document types (e.g. invoice, contract), sorted by name. Returns
+      count, has_more and per type: id, name and document_count. Use the id as
+      document_type_id in list_documents. 50 per page; page with page.
+      Read-only.
+    params:
+      - name: name_contains
+        description: Optional. Part of the name, case-insensitive.
+        type: string
+      - name: page
+        description: >
+          Optional. Page number, starting at 1. A page past the last one
+          answers with HTTP 404 — stop paging when has_more is false.
+        type: integer
+    request:
+      method: GET
+      path: /api/document_types/
+      query:
+        - name: page_size
+          value: "50"
+        - name: page
+          value: "{page}"
+        - name: name__icontains
+          value: "{name_contains}"
+    response: >-
+      {count: count, has_more: next != `null`,
+      document_types: results[*].{id: id, name: name, document_count: document_count}}
+
+  - name: list_tags
+    description: >
+      Lists tags, sorted by name. Returns count, has_more and per tag: id,
+      name, parent (id of the parent tag or null), is_inbox_tag and
+      document_count. Use the id as tag_id in list_documents. 50 per page;
+      page with page. Read-only.
+    params:
+      - name: name_contains
+        description: Optional. Part of the name, case-insensitive.
+        type: string
+      - name: page
+        description: >
+          Optional. Page number, starting at 1. A page past the last one
+          answers with HTTP 404 — stop paging when has_more is false.
+        type: integer
+    request:
+      method: GET
+      path: /api/tags/
+      query:
+        - name: page_size
+          value: "50"
+        - name: page
+          value: "{page}"
+        - name: name__icontains
+          value: "{name_contains}"
+    response: >-
+      {count: count, has_more: next != `null`,
+      tags: results[*].{id: id, name: name, parent: parent,
+      is_inbox_tag: is_inbox_tag, document_count: document_count}}

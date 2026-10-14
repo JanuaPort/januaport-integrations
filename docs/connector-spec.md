@@ -21,8 +21,11 @@ Referenz zum Selber-Schreiben — keine Programmierkenntnisse nötig.
 > es zusätzlich schreibende Tools — `POST`, markiert mit `write: true`, in genau
 > zwei Body-Formen: **Datei-Upload** (`encoding: multipart`) und **JSON-Body**
 > (`encoding: json`). Siehe [Schreibende Tools](#schreibende-tools-write) und
-> [JSON-Body](#json-body-encoding-json). Alles andere (PUT/PATCH/DELETE, mehrere
-> Dateien) bleibt dem externen MCP-Server vorbehalten.
+> [JSON-Body](#json-body-encoding-json). Eine API, die auch LESEN per `POST` mit
+> JSON-Body verlangt (Odoo JSON-2, GraphQL, Suche per POST), bindest du mit
+> `read_via_post: true` als **Lese-Werkzeug** an — siehe
+> [Lesender POST](#lesender-post-read_via_post). Alles andere (PUT/PATCH/DELETE,
+> mehrere Dateien) bleibt dem externen MCP-Server vorbehalten.
 
 ## Vollständiges Beispiel
 
@@ -91,22 +94,78 @@ tools:
 |---|---|---|
 | `name` | ja | Eindeutiger Connector-Name. Wird zum **Prefix** jedes Tool-Namens (`demo_erp_list_invoices`). Bindestriche werden zu Unterstrichen. ⚠️ **Seit Bug #596:** Ein Name, der nach dieser Normalisierung kein gültiges Präfix ergibt (Großbuchstaben, Umlaute, Punkt, Leerzeichen, führende Ziffer), wird bei der **Anlage über die Admin-Fläche abgelehnt**; ein solcher Name im **Bestand** hält den Start NICHT auf, erzeugt aber beim Start eine **WARN-Zeile** mit Namen und Grund. Umbenannt wird nichts automatisch — ein Rename berührt Scopes, Tokens und Team-Zuordnungen. **Reserviert** (das Gateway belegt diese Namen selbst — eine Integration dieses Namens verhindert den Start): `memory`, `kartei`, `usecase` (#642), `wissen` (#647), `ablage` (#726), `ping`, `catalog`, `report_problem`. |
 | `version` | **ja** | Fassung dieser Spec als **SemVer** `MAJOR.MINOR.PATCH`, in Anführungszeichen (`"1.0.0"`). Kein führendes `v`, kein `-beta`, kein `+build`, keine führenden Nullen. Fehlt sie oder ist sie ungültig, lädt die Spec **nicht** (siehe [Warum `version` Pflicht ist](#warum-version-pflicht-ist)). |
+| `instance` | nein | Deklarierte Anlagenwerte für Header und Pfade; siehe unten. |
 | `base_url` | ja | Basis-URL der API (`http://` oder `https://` mit Host). |
 | `auth` | ja | Wie das Credential in jeden Request kommt (siehe unten). |
-| `headers` | nein | **Statische Request-Header** für jeden Aufruf dieses Connectors (siehe [Statische Request-Header](#statische-request-header-headers)). Nur feste Werte. |
+| `headers` | nein | **Statische Request-Header** für jeden Aufruf dieses Connectors (siehe [Statische Request-Header](#statische-request-header-headers)). Feste Werte oder deklarierte `{{instance.<name>}}`-Marken. |
 | `timeout` | nein | Zeitlimit pro Aufruf, z. B. `30s`, `1500ms`. Default 30s, Obergrenze 120s. |
 | `min_interval` | nein | Mindestabstand zwischen zwei Aufrufen dieses Connectors (z. B. `500ms` bei ~2 Anfragen/Sekunde). Verhindert, dass das Zielsystem drosselt. |
-| `redact_params` | nein | Liste von Parameter-Namen, deren Werte im **Audit-Log** als `[REDACTED]` erscheinen (siehe unten). |
+| `redact_params` | nein | Liste von Parameter-Namen, deren Werte im **Audit-Log** als `[REDACTED]` erscheinen — auf der Protokolltiefe „Metadaten" (Default); darüber stehen sie im Inhalt (siehe unten). |
 | `endpoint_view` | nein | `true` macht diesen Connector zu einem eigenen **benannten MCP-Endpoint** `/mcp/v/<name>` (#164) — der Client sieht dann NUR die Tools dieses Connectors als eigene „Integration" (kleinere Tool-Liste). Reine Sicht: die effektiven Tools bleiben `Scope ∩ View`; Auth/Berechtigung sind identisch zu `/mcp`. Default `false`. **Seit #216 ist das der ANLAGE-Default:** der Schalter lässt sich nachträglich in der Admin-GUI bzw. über `PUT /api/admin/integrations/{name}/endpoint-view` umstellen (wirkt ohne Neustart und überstimmt diesen Wert in beide Richtungen). |
-| `base_name` | nein | Name der Katalog-Vorlage, aus der diese Spec zuletzt per `jnpt connector upgrade` fortgeschrieben wurde (Story #709) — **nur bei einer DATEI-Integration** relevant, die Datei-Entsprechung der DB-Provenienz-Spalte gleichen Namens (siehe `connector-catalog-delivery.md` (Produkt-Doku, nicht öffentlich)). Rein informativ: Kein Verhalten der Runtime hängt daran, nur der nächste `connector upgrade`-Lauf nutzt es, um die Vorlage ohne erneutes `--vorlage` wiederzufinden. Wird nie von Hand gesetzt. |
+| `base_name` | nein | Name der Katalog-Vorlage, aus der diese Spec zuletzt per `jnpt connector upgrade` fortgeschrieben wurde — **nur bei einer DATEI-Integration** relevant, die Datei-Entsprechung der DB-Provenienz-Spalte gleichen Namens (siehe (Produkt-Doku, nicht öffentlich)). Rein informativ: Kein Verhalten der Runtime hängt daran, nur der nächste `connector upgrade`-Lauf nutzt es, um die Vorlage ohne erneutes `--vorlage` wiederzufinden. Wird nie von Hand gesetzt. |
 | `tools` | ja | Liste der angebotenen Tools (mindestens eins). |
+
+### Deklarierte Instanzwerte (`instance`)
+
+Stufe 1 „Sicher verbinden“: gebaut, live nicht belegt. Die Vorlage deklariert
+Anlagenwerte; `example` ist nur ein Hinweis und wird niemals eingesetzt.
+
+```yaml
+instance:
+  - name: database
+    label: Datenbankname
+    kind: text
+    example: mycompany
+    value: meine-db # nur in der Instanz; fehlt in der Vorlage
+headers:
+  X-Odoo-Database: "{{instance.database}}"
+```
+
+`name` entspricht `[a-z][a-z0-9_]*` und ist eindeutig, `label` ist Pflicht.
+Jede Marke muss deklariert und jede Deklaration benutzt sein. Marken dürfen
+nur in Headerwerten (Spec und Tool) sowie `request.path` stehen, niemals in
+`base_url`, Query, Body oder `auth`. Der Loader ersetzt sie durch Literale;
+Runtime, Werkzeugfläche und Audit benötigen keine Vorlagensprache.
+
+| Art | Wert und erlaubte Stelle |
+|---|---|
+| `text` | 1–256 sichtbare ASCII-Zeichen (0x20–0x7E), nur in Headern; keine Steuerzeichen |
+| `segment` | 1–200 Zeichen aus `[A-Za-z0-9._~,-]`, weder `.` noch `..`, nur als ganzes Pfadsegment; kein `/`, `?`, `#` oder `%` |
+| `guid` | genau eine UUID außer Null-GUID; im Pfad auch eingebettet, etwa `/companies({{instance.company_id}})`; auch in Headern |
+
+`host` und `value` gehören derselben Artenliste `InstanceKind` an, bleiben aber
+auf die festen P1-Felder beschränkt. Ein Wert gleich `example`, `mycompany`,
+`CHANGE-ME` oder mit Null-GUID ist ein Ladefehler mit Label und Name.
+Fehlende `value` sind nur im expliziten Vorlagenmodus von `Load` erlaubt;
+Katalog und Patch verwenden denselben Loader mit `TemplateMode`.
+
+Marken in `Host`, `Authorization`, `Proxy-Authorization`, `Cookie`,
+`Content-Length`, `Transfer-Encoding`, `Connection`, `X-Forwarded-*` und
+`Forwarded` sind unabhängig von Groß-/Kleinschreibung verboten. Die bestehende
+Header-Sperre (einschließlich `Content-Type`) gilt zusätzlich.
+
+`connector.InstanceFields` liefert zuerst `base_url`, dann bei OAuth2
+`auth.token_url`/`auth.client_id`, dann die deklarierten Werte in Vorlagenreihenfolge.
+Jedes Feld hat `Name`, `Label`, `Kind`, `Example`, `Required`; `Field` bleibt
+als P1-kompatibler Feldpfad erhalten (`instance.<name>` bei Deklarationen).
+Deklarierte Werte sind immer Pflicht. Der Session-Login-Body bleibt ein separater
+Anhebungs-Teilbaum. Aktivierung und Anhebung nehmen `instance: {name: value}`
+in der Verwaltungs-API an; nur Menschen setzen die Werte, nie Admin-MCP oder
+`/mcp`. Die Verwaltungsoberfläche fragt die Werte bei Anlage und Vorlagen-Update
+als Felder mit Label und Muster ab und sendet sie im `instance`-Objekt.
+Die Browser-Prüfung spiegelt die Server-Regeln; `minor` ist beim Update sichtbar,
+fehlende Werte sperren den Knopf. Keine Secrets und keine Erweiterung für JTL.
+
+Ein neuer Header-Instanzwert verlangt mindestens MINOR. Ein Literal-zu-Marke-
+Umstieg im Pfad verlangt MAJOR; der Flächen-Wächter prüft auch die ursprünglichen
+Marken nach der Auflösung. Einzelheiten: Katalog und Anhebung (Produkt-Doku, nicht öffentlich).
 
 ### Warum `version` Pflicht ist
 
 Eine Spec ohne Fassung lässt sich nicht **ausliefern**. Genau das ist seit
 Epic #424 die Aufgabe der Connector-Bibliothek: Die mitgelieferten Vorlagen
 stehen als **Katalog** im Image (siehe
-„Katalog & Anhebung“ (Produkt-Doku, nicht öffentlich)), eine Integration merkt
+Katalog & Anhebung (Produkt-Doku, nicht öffentlich)), eine Integration merkt
 sich, **auf welcher Fassung sie basiert**, und ein Update — per neuem Image
 oder später per signiertem Bundle (#123) — muss beantworten können: *ist das
 neuer als das, worauf die laufende Instanz beruht, und was ändert sich dabei?*
@@ -116,6 +175,7 @@ Die Antwort hängt an zwei Konventionen, die `version` erst möglich macht:
 - **PATCH/MINOR** (`1.0.0` → `1.0.1`, `1.1.0`) = ein **Fix ohne Änderung der
   Werkzeug-Fläche**: bessere Beschreibungen, ein korrigiertes
   `response`-Mapping, ein zusätzlicher statischer Header, ein anderes `timeout`.
+- **MINOR mindestens:** eine neue `instance[]`-Deklaration für Header; ein Pfadumstieg auf Instanzmarken bleibt MAJOR.
 - **MAJOR** (`1.x.y` → `2.0.0`) = die **Werkzeug-Fläche ändert sich**: ein Tool
   kommt hinzu/fällt weg/wird umbenannt, ein Parameter oder sein Typ ändert sich,
   ein Tool wird schreibend, eine Privacy-Deklaration wird kleiner, `base_url`
@@ -124,7 +184,7 @@ Die Antwort hängt an zwei Konventionen, die `version` erst möglich macht:
 Damit das eine **Mechanik** und nicht nur eine Bitte ist, prüft der
 **Flächen-Wächter** bei jeder Anhebung die Aussage gegen die Wirklichkeit: Eine
 `PATCH`/`MINOR`-Erhöhung, die die Fläche verändert, wird **fail-closed
-abgewiesen** (siehe „Katalog & Anhebung“ (Produkt-Doku, nicht öffentlich)).
+abgewiesen** (siehe Katalog & Anhebung (Produkt-Doku, nicht öffentlich)).
 
 **Formregeln.** Genau drei nicht-negative Ganzzahlen, durch Punkte getrennt.
 Kein führendes `v` (`v1.0.0` ✗), kein Prerelease (`1.0.0-beta` ✗), kein
@@ -141,7 +201,7 @@ sicher vergleichen ließen. **Immer in Anführungszeichen**, sonst liest YAML
 > Das ist eine bewusste Entscheidung (keine Bestands-Ausnahme, PO-Entscheid
 > 13.08.2026): eine „versionslose" Sonderklasse wäre für immer von Katalog,
 > Anhebung und Bundle ausgeschlossen gewesen. **Die Reparatur ist eine Zeile
-> YAML** — siehe „Update-Runbook §1a“ (Produkt-Doku, nicht öffentlich).
+> YAML** — siehe Update-Runbook §1a (Produkt-Doku, nicht öffentlich).
 
 ### `auth`
 
@@ -149,12 +209,39 @@ sicher vergleichen ließen. **Immer in Anführungszeichen**, sonst liest YAML
 |---|---|---|
 | `header` | ja | Name des HTTP-Headers, meist `Authorization`. |
 | `template` | ja | Wert des Headers mit dem Platzhalter `{{credential}}`, z. B. `"Bearer {{credential}}"` oder `"{{credential}}"`. |
-| `credential` | ja | **Name** des Secrets im Vault — nie das Secret selbst. Anlegen mit `jnpt credential set --name <name>` (siehe README). |
-| `type` | nein | Herkunft des Werts, der `{{credential}}` füllt. Weglassen = statisches Vault-Credential (Default, unverändertes Verhalten). `oauth2_client_credentials` = JanuaPort holt sich einen Access-Token selbst (siehe [App-only-Token](#app-only-token-authtype-oauth2_client_credentials)). |
+| `credential` | ja (außer bei den delegierten Typen) | **Name** des Secrets im Vault — nie das Secret selbst. Anlegen mit `jnpt credential set --name <name>` (siehe README). Bei `oauth2_on_behalf_of` und `oauth2_token_exchange` **verboten**. |
+| `type` | nein | Herkunft des Werts, der `{{credential}}` füllt. Weglassen = statisches Vault-Credential (Default, unverändertes Verhalten). `oauth2_client_credentials` = JanuaPort holt sich einen Access-Token selbst (siehe [App-only-Token](#app-only-token-authtype-oauth2_client_credentials)). `session_login` = JanuaPort meldet sich mit dem Passwort aus dem Vault an und nutzt die Sitzung (siehe [Session-Login](#session-login-authtype-session_login)). `oauth2_on_behalf_of` und `oauth2_token_exchange` = delegierte Identität: das SSO-Token der angemeldeten Person wird getauscht (siehe [Token-Tausch](#token-tausch-nach-rfc-8693-authtype-oauth2_token_exchange)). |
+| `audience` | nur bei `oauth2_token_exchange` | Die Ziel-Audience des Tauschs, **genau ein** Bezeichner ohne Leer- und Steuerzeichen (meist die Client-ID des Zielsystems beim Identitätsanbieter). Bei jedem anderen `type` ein Ladefehler. |
 
 Das Secret steht **niemals** in der Spec: Die Datei darf bedenkenlos eingecheckt
 werden. JanuaPort setzt das Secret erst beim Aufruf in den Header ein und schreibt es
 in kein Log und keine Fehlermeldung.
+
+## Token-Tausch nach RFC 8693 (`auth.type: oauth2_token_exchange`)
+
+Die herstellerneutrale delegierte Identität (**im Bau**: Code gebaut,
+Live-Beleg folgt): JanuaPort tauscht das SSO-Token der angemeldeten Person beim
+Identitätsanbieter (Keycloak, Okta, Authentik, Zitadel) gegen ein Token mit der
+Audience des Zielsystems. Das Zielsystem sieht die Person, nie ihr
+Anmelde-Token.
+
+```yaml
+auth:
+  type: oauth2_token_exchange
+  header: Authorization
+  template: "Bearer {{credential}}"
+  audience: ziel-api # Pflicht, genau ein Bezeichner
+  scopes: [ziel:lesen] # Pflicht, wird genau so gesendet
+```
+
+- **Pflicht:** `audience`, `scopes` (mindestens einer, keiner leer).
+- **Verboten:** `credential`, `token_url`, `client_id`, `session`. Token-Endpunkt
+  (Discovery des SSO-Issuers), Client-ID und Secret (`sso-obo`) gehören der
+  Plattform, nie der Spec.
+- Nur Integrationen im Besitz `corp`; eine eigene Team-Spec darf den Typ nicht
+  nutzen.
+- Einrichtung, Allowlist der Login-Clients (`JNPT_SSO_EXCHANGE_ALLOWED_AZP`),
+  Grund-Codes `tx_*` und Herstellerlage: §5o (Produkt-Doku, nicht öffentlich).
 
 ## App-only-Token (`auth.type: oauth2_client_credentials`)
 
@@ -167,6 +254,9 @@ Setzt eine Spec `auth.type: oauth2_client_credentials`, holt JanuaPort den Token
 **selbst** beim Token-Endpoint, hält ihn im Speicher und erneuert ihn rechtzeitig
 vor Ablauf. Für den Rest der Spec ändert sich **nichts** — der Token wird über
 dasselbe `template` in denselben `header` gesetzt wie ein statisches Credential.
+Die Credentials-Seite der Admin-GUI zeigt am genannten Credential deshalb
+„Client-Secret (OAuth2)“, ohne `auth.type` „API-Schlüssel“ — abgeleitet
+aus der Spec; der Vault-Eintrag selbst bleibt ein untypisierter Wert.
 
 ```yaml
 auth:
@@ -208,7 +298,15 @@ jnpt connector check <connector-name>
 > dem betroffenen Feld in der Meldung, statt erst beim ersten Aufruf mit einem
 > Token-Endpoint-Fehler zu scheitern, der auf das (intakte) `credential` zeigt.
 > Details und die Begründung, warum die Prüfung NICHT am Start/Ladeweg sitzt,
-> stehen in `connector-catalog-delivery.md` (Produkt-Doku, nicht öffentlich).
+> stehen in (Produkt-Doku, nicht öffentlich).
+> **Heute** gilt dasselbe für die Null-GUID in `base_url` und in jedem
+> Werkzeug-Pfad — bei **jeder** Spec, nicht nur bei OAuth2 (Business Central
+> trägt dort Mandant und Firma). Die Meldung nennt die Stelle, bei einem Pfad
+> auch das Werkzeug.
+> **Heute** liest dieser Wächter die Aktivierungsfelder aus
+> `connector.InstanceFields`: Auch reservierte Platzhalter-Hosts werden
+> abgewiesen. In der GUI ergänzen Sie bei `guid` nur die GUID (Adresse bleibt
+> aus dem Muster), bei `host` die eigene Adresse; siehe Katalog-Auslieferung §2.
 
 **Was JanuaPort dabei zusichert:**
 
@@ -237,6 +335,110 @@ Client-Zertifikate (mTLS) und signierte Client-Assertions.
 > Aufruf einen frischen — lieber ein Request mehr als eine erfundene Frist. In
 > der Praxis kommt das nicht vor; falls doch, bitte melden.
 
+## Session-Login (`auth.type: session_login`)
+
+Manche Bestandssysteme kennen weder API-Key noch OAuth, sondern eine
+**Anmeldung**: Benutzer und Passwort gehen per POST an einen Login-Endpunkt,
+zurück kommt eine **Sitzung** — als Cookie (SAP Business One Service Layer:
+`B1SESSION`, dazu `ROUTEID`) oder als Token in der JSON-Antwort (plentyONE:
+`access_token`). Setzt eine Spec `auth.type: session_login`, meldet sich
+JanuaPort selbst an, hält die Sitzung im Speicher und setzt sie über dasselbe
+`template` in denselben `header` wie jedes andere Credential.
+
+```yaml
+# SAP Business One (Cookie-Variante)
+base_url: https://b1.kunde.example:50000/b1s/v2 # https ist Pflicht
+auth:
+  type: session_login
+  credential: sap-b1-passwort # Vault-Name des PASSWORTS (nur das Passwort)
+  header: Cookie
+  template: "{{credential}}"
+  session:
+    login_path: /Login # relativ zu base_url, feste Konstante
+    login_body: # Instanzwerte dieser Anlage
+      CompanyDB: "SBODEMOUS"
+      UserName: "januaport-svc"
+      Password: "{{credential}}" # genau EIN Blatt
+    token:
+      cookie: B1SESSION
+      extra_cookies: [ROUTEID]
+    lifetime: {field: SessionTimeout, unit: minutes, idle: true}
+```
+
+```yaml
+# plentyONE (Token-Variante)
+auth:
+  type: session_login
+  credential: plenty-passwort
+  header: Authorization
+  template: "Bearer {{credential}}"
+  session:
+    login_path: /rest/login
+    login_body: { username: "api-svc", password: "{{credential}}" }
+    token: { json_field: access_token }
+    lifetime: { field: expires_in, unit: seconds, idle: false }
+```
+
+| Feld | Pflicht | Bedeutung |
+|---|---|---|
+| `credential` | ja | Benennt das **Passwort** im Vault (`jnpt credential set --name sap-b1-passwort`). Ein Credential-Override greift wie gewohnt. |
+| `session.login_path` | ja | Pfad der Anmeldung relativ zu `base_url`, beginnt mit `/`. **Ohne** Platzhalter, Query, Fragment, Leerzeichen und `//` — das Passwort geht nur an `base_url`. |
+| `session.login_body` | ja | Der Login-Body als Struktur (wie `body_json`). **Genau ein** Blatt ist `"{{credential}}"`; kein `{param}` (Werkzeug-Argumente erreichen die Anmeldung nie); ein Schlüssel, der nach Geheimnis klingt (`password`, `secret`, `token`, `api_key`, `kennwort` …), darf keine Konstante tragen. Mandant und Benutzer sind **Instanzwerte**, keine Geheimnisse. |
+| `session.token.cookie` | eine Variante | Name des Sitzungs-Cookies (RFC 6265). Verlangt `header: Cookie` und `template: "{{credential}}"`. `extra_cookies` nimmt weitere Cookies mit, wenn das Zielsystem sie setzt. |
+| `session.token.json_field` | eine Variante | Schlüssel der obersten Ebene der Login-Antwort, der den Token trägt. `header` ist dann nicht `Cookie`. |
+| `session.lifetime` | nein | Feld der Login-Antwort mit der Lebensdauer, `unit: seconds\|minutes`, `idle: true` = Frist ab dem letzten Gebrauch. Ohne den Block gilt die Sitzung, bis das Zielsystem sie mit 401 ablehnt. |
+
+Ein `session`-Block ohne `type: session_login` ist ein Ladefehler, ebenso
+`token_url`/`client_id`/`scopes` bei diesem Typ.
+
+**Was JanuaPort dabei zusichert:**
+
+- **Das Passwort liegt nur im Vault** und verlässt den Prozess nur im
+  Login-Request (gezählte Reveal-Stelle, (Produkt-Doku, nicht öffentlich) §3.5). Die
+  **Sitzung lebt nur im Speicher**, nie im Log, Audit oder in einer Antwort;
+  spiegelt das Zielsystem sie (oder nur einen Teil des Cookie-Kopfes) zurück,
+  wird sie maskiert.
+- **Fehler ohne Body:** Eine gescheiterte Anmeldung nennt Status und
+  Handlungshinweis, nie die Login-Antwort. Es gibt eine WARN-Zeile, kein
+  eigenes Audit-Ereignis — der fehlschlagende Aufruf trägt den Grund.
+- **Eine Sitzung je Integration**, auch bei vielen parallelen Aufrufen genau
+  eine Anmeldung. Proaktive Erneuerung vor dem Ablauf, sonst nach einem 401.
+- **Nach einem 401 genau eine Erneuerung:** Ein lesendes Werkzeug meldet sich
+  neu an und wiederholt den Aufruf einmal (ein lesender POST mit demselben
+  Body). Ein **Schreib-Werkzeug** (`write: true`) meldet sich neu an,
+  **wiederholt aber nicht** und antwortet „Die Sitzung … ist erneuert — der
+  Schreibvorgang wurde nicht wiederholt; das Werkzeug bitte erneut aufrufen".
+  Lehnt das Zielsystem auch die neue Sitzung ab, endet der Aufruf mit dem
+  gewohnten 401-Fehler.
+- **Schutz des Dienstkontos vor Sperre:** Lehnt die Anmeldung das Passwort ab
+  (400/401/403), meldet sich JanuaPort **nicht wieder an, bis das Credential
+  ersetzt ist** — jeder Aufruf sagt bis dahin „Anmeldung am Zielsystem pausiert
+  nach Fehlschlag". Netz- und Serverfehler pausieren 60 s. Erfolgreiche
+  Anmeldungen höchstens eine je 10 s.
+- **Wird das Passwort ersetzt** (neue Version im Vault), meldet sich
+  JanuaPort vor dem nächsten Aufruf neu an — ohne Umweg über ein 401.
+
+**Bewusste Grenzen (v1):**
+
+- **https ist Pflicht, auch im LAN.** Über diese Verbindung geht das Passwort;
+  einen `http`-Weg gibt es nicht. Viele SAP-B1-Service-Layer laufen mit einem
+  **selbstsignierten Zertifikat** — die sind **ohne eigene vertrauenswürdige CA nicht
+  nutzbar**. Die Zertifikatsprüfung abzuschalten ist kein Ausweg und im Code
+  per Wächter ausgeschlossen.
+- **Kein Logout:** Bei jedem Neuaufbau der Werkzeuge (SIGHUP, jede Anlage zur
+  Laufzeit) entsteht eine neue Sitzung; die alte endet beim Zielsystem nach
+  Leerlauf. Je Neuaufbau bleibt also **bis zu eine verwaiste Sitzung** stehen.
+- **Je Prozess eine Sitzung:** Bei Postgres active/active hält jede Instanz
+  ihre eigene. Bei SAP heißt das je Instanz eine belegte Sitzung; ob das die
+  Lizenz belegt, misst die Live-DoD.
+- **Nur JSON-Login.** Kein Formular-Login, kein zweites Geheimnis, kein
+  OAuth2 Password Grant (geplante Erweiterung; Produkt-Doku, nicht öffentlich).
+- **Kein Feld in der Anlage-Oberfläche:** `login_body` wird über die YAML bzw.
+  `jnpt connector add` gepflegt. Eine Katalog-Vorlage trägt Platzhalter, die
+  vor der Aktivierung ersetzt werden müssen (Null-GUID, wie bei OAuth2).
+- **Team-Integrationen** nutzen den gehärteten Client (nur öffentliche
+  Ziele) — ein Service Layer im LAN geht nur im Besitz `corp`.
+
 ### `tools[]`
 
 | Feld | Pflicht | Bedeutung |
@@ -259,18 +461,19 @@ Client-Zertifikate (mTLS) und signierte Client-Assertions.
 | `description` | empfohlen | Beschreibung für den Agenten. |
 | `type` | ja | `string`, `integer`, `number` oder `boolean`. |
 | `required` | nein | `true` = Pflichtparameter. |
-| `enum` | nein | Erlaubte Werte (nur bei `type: string`). |
+| `enum` | nein | Erlaubte Werte (nur bei `type: string`). Wird bei jedem Aufruf geprüft: Ein anderer Wert wird abgewiesen, bevor ein Request entsteht. |
 
 ### `request`
 
 | Feld | Pflicht | Bedeutung |
 |---|---|---|
-| `method` | ja | `GET` (read-only) oder `POST` (nur bei `write: true`). PUT/PATCH/DELETE sind nicht im Format. |
+| `method` | ja | `GET` (read-only) oder `POST` (bei `write: true` oder mit `read_via_post: true`). PUT/PATCH/DELETE sind nicht im Format. |
 | `path` | ja | Pfad relativ zur `base_url`, beginnt mit `/`. `{param}`-Platzhalter werden gefüllt und korrekt kodiert. |
 | `query` | nein | Liste von `{name, value}`. `value` darf `{param}`-Platzhalter enthalten. Besteht der Wert nur aus einem Platzhalter und ist der zugehörige Parameter nicht gesetzt, entfällt der Query-Parameter ganz. |
 | `encoding` | nein | Body-Kodierung. Leer = kein Body (GET). `multipart` = multipart/form-data (Datei-Upload, nur bei `POST`). `json` = application/json (JSON-Body, nur bei `POST`). |
 | `body` | nein | Die multipart-Felder (nur bei `encoding: multipart`, siehe unten). |
 | `body_json` | nein | Der JSON-Body als Struktur (nur bei `encoding: json`, siehe unten). Schließt `body` aus. |
+| `read_via_post` | nein | `true` = dieser `POST` mit JSON-Body **liest** (siehe [Lesender POST](#lesender-post-read_via_post)). Nur mit `encoding: json` und ohne `write: true`. |
 
 ## Statische Request-Header (`headers`)
 
@@ -301,9 +504,8 @@ Header-Namen unabhängig davon).
 
 ### Regeln (beim Start geprüft)
 
-- **Nur feste Werte.** Es gibt hier **keine Platzhalter**: weder `{param}` noch
-  `{{credential}}`. Beides ist ein Ladefehler, damit niemand glaubt, es würde
-  ersetzt.
+- **Feste Werte oder deklarierte Instanzmarken.** `{{instance.<name>}}` wird
+  beim Laden aufgelöst. `{param}` und `{{credential}}` bleiben verboten.
 - ⚠️ **Ein Header trägt nie ein Secret.** Zugangsdaten gehen ausschließlich über
   `auth` — ein Weg, ein Vault-Zugriff, eine Stelle, an der redigiert wird. Wer
   einen API-Key als Header braucht, setzt ihn über `auth.header` +
@@ -331,7 +533,7 @@ Header-Namen unabhängig davon).
   JSON sein, sonst scheitert das Response-Mapping.
 
 **Nicht dabei und bewusst nicht geplant:** Header aus Tool-Parametern, berechnete
-Werte, Vorlagensprache — und keine Auswertung von **Antwort**-Headern (etwas
+Werte und allgemeine Vorlagensprache — und keine Auswertung von **Antwort**-Headern (etwas
 ganz anderes).
 
 ## Platzhalter `{param}`
@@ -581,7 +783,7 @@ die Inbox legt. Inbox vs. anheften: `get_voucher` liefert ein `files`-Array
 - **Bestätigung:** Schreibende Tools tragen MCP-Annotations
   (`readOnlyHint:false`), sodass ein Client (z. B. Cowork) vor dem Aufruf
   nachfragen kann. In die Description gehört der einheitliche **Kernsatz**
-  (wörtlich, mit dem tool-genauen Scope):
+  (heute, wörtlich, mit dem tool-genauen Scope):
 
   > This is a WRITE action. It is annotated as such, so your client may ask
   > the user; JanuaPort itself never asks. It needs the tool-exact permission
@@ -599,24 +801,27 @@ die Inbox legt. Inbox vs. anheften: `get_voucher` liefert ein `files`-Array
   aufsetzt (Use Case und KI-Mandat); eine Einzelbestätigung je Aufruf gibt es
   nicht, die Grenze ist das tool-genaue Recht.
 
-  **Verbindlich:** Satz B steht nur dort, wo das Werkzeug es wirklich tut. Die
-  frühere Wenn-Formulierung („If this moves money or leaves the company …")
-  ist verboten — an einem Werkzeug, das es nie tut, ist sie Rauschen, das die
-  KI bremst. Einen Beleg ablegen, eine Datei anhängen, einen Entwurf anlegen
-  oder eine Mail verschieben bewegt kein Geld und wirkt nicht nach außen. In
-  der heute ausgelieferten Fläche trägt den Satz deshalb kein Werkzeug. Ein
-  Test im Produkt pinnt den Kernsatz an jedem Schreibwerkzeug der
-  ausgelieferten Vorlagen, lässt Satz B nur an ausdrücklich gelisteten Sende-
-  oder Zahlwerkzeugen zu und verbietet die alte Wenn-Formulierung in jedem
-  Werkzeugtext.
+  **Verbindlich (PO-Entscheid heute):** Satz B steht nur dort, wo das
+  Werkzeug es wirklich tut. Die frühere Wenn-Formulierung („If this moves
+  money or leaves the company …") ist verboten — an einem Werkzeug, das es nie
+  tut, ist sie Rauschen, das die KI bremst. Einen Beleg
+  ablegen, eine Datei anhängen, einen Entwurf anlegen oder eine Mail
+  verschieben bewegt kein Geld und wirkt nicht nach außen. In der heute
+  ausgelieferten Fläche trägt den Satz deshalb kein Werkzeug. Kommt ein
+  echtes Sende- oder Zahlwerkzeug, gehört es in die Liste
+  `geldOderAussenwirkung` in (Produkt-Doku, nicht öffentlich); der Pin lässt
+  Satz B an jedem anderen Werkzeug scheitern (auch umformuliert), und der
+  Wächter verbietet die alte Wenn-Formulierung in jedem Werkzeugtext.
 
-  **Warum nicht „a human must confirm":** JanuaPort fragt nie selbst; fragen
-  kann nur der Client über die Annotation. Ein produktiver Agent, der „ein
-  Mensch muss bestätigen" liest, wartet auf eine Bestätigung, die nie kommt.
-  Eine Freigabe ist ein Auftrag des Menschen — ein Schritt in der
-  Arbeitsliste oder eine ausdrückliche Anweisung —, keine Rückfrage im Chat.
-  Derselbe Test verbietet den alten Satz in jeder Werkzeug- und
-  Parameterbeschreibung.
+  **Warum nicht „a human must confirm":** JanuaPort fragt nie selbst;
+  fragen kann nur der Client über die
+  Annotation. Ein produktiver Agent, der „ein Mensch muss bestätigen" liest,
+  wartet auf eine Bestätigung, die nie kommt. Eine Freigabe ist ein Auftrag
+  des Menschen — ein Schritt in der Arbeitsliste oder eine ausdrückliche
+  Anweisung —, keine Rückfrage im Chat. Der Wächter
+  (Produkt-Doku, nicht öffentlich) verbietet den alten Satz in jeder Werkzeug-
+  und Parameterbeschreibung und pinnt den Kernsatz an jedem Schreibwerkzeug
+  der ausgelieferten Vorlagen.
 - **Audit:** Der Aufruf wird als schreibend markiert (`jnpt audit list --write`).
   Scheitert das Schreiben des Audit-Events **nach** dem Upload, sieht der Agent
   einen Fehler, obwohl die Datei evtl. schon hochgeladen wurde — die Meldung
@@ -681,7 +886,8 @@ tools:
 ### Regeln (beim Start geprüft)
 
 - `encoding: json` verlangt **`method: POST`** und damit **`write: true`** —
-  ein JSON-Body ist immer ein Schreibvorgang.
+  außer das Werkzeug ist ausdrücklich als lesender POST deklariert
+  (`read_via_post: true`, siehe unten).
 - `body_json` und `body` (multipart) **schließen sich aus**: ein Tool sendet
   einen Body, nicht zwei.
 - Die **oberste Ebene ist ein Objekt** (`feld: wert`). Ein einzelner Text oder
@@ -710,12 +916,25 @@ nach oben fort:
   Adresse, sondern das ganze `replyTo`-Feld.
 - Bleibt am Ende gar nichts übrig, wird `{}` gesendet.
 - Konstante Werte aus dem YAML (`normal`, `true`, Zahlen) bleiben immer stehen.
+- **Tupel entfallen ganz.** Eine Liste aus einfachen Werten mit mindestens
+  einem festen Wert, die **selbst Eintrag einer Liste** ist — etwa ein
+  Filter-Tripel `["name", "ilike", "{q}"]` in einer Liste von Filtern —, entfällt
+  als Ganzes, sobald einer ihrer Werte entfällt. Aus `["name", "ilike"]` würde
+  sonst ein kaputter Filter.
+- **Als Wert eines Feldes gilt Eintrag für Eintrag.** `fields: ["name",
+  "email", "{extra_field}"]` wird ohne `extra_field` zu `["name", "email"]` —
+  entfiele die ganze Liste, lieferte eine API wie Odoo still **alle** Felder.
 
 ### Grenzen (v1)
 
-- **Werte aus Parametern sind immer Text.** `"{page}"` mit einem
-  `integer`-Parameter landet als `"7"` im JSON, nicht als `7`. Wo die API eine
-  echte Zahl oder ein `true` braucht, muss der Wert im YAML **konstant** sein.
+- **Typtreue nur beim reinen Platzhalter.** `"{page}"` mit einem
+  `integer`-Parameter landet als Zahl `7` im JSON, mit einem
+  `boolean`-Parameter als `true`/`false` (heute). Eine gemischte Vorlage
+  (`"Seite {page}"`) und jeder `string`-Parameter bleiben Text.
+- **Verschachtelte Oder-Filter.** Bei einer Präfix-Domäne wie
+  `["|", ["name", "ilike", "{q}"], ["email", "ilike", "{email}"]]` entfällt ohne
+  `email` nur das zweite Tripel; `["|", […]]` bleibt stehen. Optionale Filter
+  deshalb nur in UND-Verknüpfungen verwenden.
 - **Listen haben feste Länge**: Aus einem Parameter lassen sich keine Einträge
   erzeugen.
 - Kein `form-urlencoded`, kein PUT/PATCH/DELETE, keine mehrstufigen Abläufe —
@@ -733,6 +952,90 @@ Body-Werte sind normale Tool-Argumente — sensible Felder gehören wie überall
 > Firmenname mit `"` die Struktur zerreißen — oder heimlich Felder ergänzen, die
 > in der Spec gar nicht stehen. Deshalb gibt es kein „JSON als Freitext".
 
+## Lesender POST (`read_via_post`)
+
+Manche APIs verlangen **jeden** Aufruf als `POST` mit JSON-Body — auch reines
+Lesen: Odoo ab Version 19 (JSON-2-API), GraphQL, Elasticsearch `_search`,
+Jira-Suche. Ohne Deklaration wäre ein solches Werkzeug ein Schreibwerkzeug
+(tool-genaues Schreibrecht, Schreib-Annotation und Schreib-Audit). Mit
+`read_via_post: true` erklärst du den Aufruf ausdrücklich zum **Lesevorgang**:
+
+```yaml
+  - name: search_partners
+    description: Searches customers by name. Read-only.
+    params:
+      - name: q
+        description: Optional part of the name.
+        type: string
+      - name: extra_field
+        description: Optional additional field to return.
+        type: string
+        enum: [phone, street] # in einer Feldliste Pflicht (siehe Regeln)
+      - name: active
+        description: Only active (true) or archived (false) customers.
+        type: boolean
+      - name: order
+        description: Sort order.
+        type: string
+        enum: [name asc, id desc]
+    request:
+      method: POST
+      path: /json/2/res.partner/search_read # konstant: die Methode steht im Pfad
+      encoding: json
+      read_via_post: true
+      body_json:
+        domain:
+          - ["name", "ilike", "{q}"] # Tupel: entfällt ohne q ganz
+          - ["active", "=", "{active}"] # typtreu: true/false
+        fields: ["name", "email", "{extra_field}"]
+        limit: 80 # fester Deckel
+        order: "{order}" # enum: nur die zwei Werte
+```
+
+Das Werkzeug ist dann in jeder Hinsicht ein Lese-Werkzeug: `readOnlyHint: true`,
+ein Leserecht genügt (auch ein Recht auf die ganze Integration), keine
+Bestätigung, im Audit-Log kein Schreibvorgang.
+
+**Regeln (beim Start geprüft):**
+
+- `read_via_post: true` verlangt `method: POST`, `encoding: json` mit
+  `body_json` und **kein** `write: true`. Ein `POST` **ohne** die Deklaration
+  bleibt an `write: true` gebunden — ein vergessenes `write` fällt weiter auf.
+- **Der Pfad ist konstant** — kein `{param}` darin. Bei diesen APIs steht die
+  Operation im Pfad; ein Platzhalter (`/json/2/{model}/{method}`) ließe den
+  Aufrufer `unlink` statt `search_read` schicken.
+- **Kein Body-Wert besteht nur aus einem freien Text-Parameter** (`string` ohne
+  `enum`). `query: "{q}"` gegen GraphQL ließe den Aufrufer eine `mutation`
+  schicken. Erlaubt sind Parameter mit `enum`, Zahlen, Wahrheitswerte, eine
+  Vorlage mit festem Text (`"Kunde {q}"`) und ein Eintrag in einem
+  Filter-Tripel, das selbst in einer Liste steht (`domain: [["name", "ilike",
+  "{q}"]]`). Eine einfache Liste als Feldwert zählt NICHT dazu — in
+  `args: ["db", 2, "res.partner", "{q}"]` wählt die feste Position bei JSON-RPC
+  die Methode. Deshalb braucht auch ein optionaler Eintrag in `fields` einen
+  Parameter mit `enum`.
+- **Dasselbe gilt für `query`-Werte:** `value: "{q}"` mit einem freien
+  Text-Parameter wird abgelehnt; `value: "search_{q}"`, Zahlen, Wahrheitswerte
+  und `enum`-Parameter sind erlaubt.
+- `response_file` bleibt bei jedem `POST` verboten.
+
+> **Deine Aussage, nicht unsere Prüfung.** Die Regeln oben schließen die
+> bekannten Wege, auf denen ein Aufrufer die Operation wählen könnte — sie
+> garantieren nicht, dass es keinen weiteren gibt. JanuaPort kann nicht
+> nachprüfen, ob die Methode beim Anbieter wirklich nichts ändert. `read_via_post: true` ist
+> deine Erklärung dazu — prüfe sie gegen die Anbieter-Doku (bei Odoo: `search_read`,
+> `read`, `search_count`, `fields_get`, `name_search` lesen; `create`, `write`,
+> `unlink`, `action_*` schreiben). Mitgelieferte Specs sind zusätzlich im Test
+> `TestLesendePostsSindBelegt` mit Pfad und Doku-Verweis festgehalten.
+
+> **Pseudonyme in Suchwerten.** Wie bei jedem Lese-Werkzeug werden Pseudonyme in
+> Text-Parametern vor dem Aufruf zurückgewandelt — eine Suche nach einem
+> pseudonymisierten Namen findet den echten Datensatz. Das ist gewollt, keine
+> Lücke.
+
+Für `jnpt connector check` gilt: Ohne `check: true` nimmt die Probe ein
+`GET`-Werkzeug vor einem lesenden POST. Soll ein lesender POST die Probe sein
+(Odoo: `res.users/context_get`), markiere ihn mit `check: true`.
+
 ## Audit & Redaction (`redact_params`)
 
 Jeder Tool-Aufruf, der den Dispatch erreicht, wird protokolliert (`jnpt audit
@@ -746,9 +1049,26 @@ oder ein Suchbegriff mit PII), nimm ihre Namen in `redact_params` auf:
 redact_params: [from, customer_id]
 ```
 
-Die gelisteten Parameter erscheinen im Audit-Log dann als `"[REDACTED]"` —
-der Wert verlässt den Prozess nicht. Die Liste gilt **connector-weit**: Ein
-Name wird in jedem Tool dieses Connectors redigiert, das ihn als Parameter hat.
+Die gelisteten Parameter erscheinen im Audit-Log dann als `"[REDACTED]"`. Die
+Liste gilt **connector-weit**: Ein Name wird in jedem Tool dieses Connectors
+redigiert, das ihn als Parameter hat.
+
+> ⚠️ **Das gilt auf der Protokolltiefe „Metadaten" (dem Default) — nicht darüber
+>.** Der Betreiber kann die Protokolltiefe auf „Abfragen" oder „Antworten"
+> stellen (eine bewusste, auditierte Entscheidung; Datenschutz-Einordnung in
+> (Produkt-Doku, nicht öffentlich)). Dann stehen die VOLLSTÄNDIGEN Argumente —
+> auch die `redact_params`-Felder — im Inhalt des Protokolls (eine Nebentabelle
+> des Audit-Logs, nur für Menschen in der Verwaltung lesbar, jeder Abruf selbst
+> protokolliert, mit eigener Inhaltsfrist). `redact_params` beschreibt PII, kein
+> Geheimnis: Ein Spec-Autor darf sich nicht darauf verlassen, dass der Wert den
+> Prozess nie verlässt. Geheimnisse gehören nie in einen Parameter, sondern ins
+> Credential (es erscheint auf keiner Stufe); Argumente mit einem Namen der
+> festen Secret-Klasse (`password`, `token`, `api_key` …) bleiben auf jeder Stufe
+> geschwärzt. Nicht im Werkzeug deklarierte Argumente behalten auf jeder Stufe
+> ihren Namen, ihr Wert wird `[REDACTED]` — auch im Inhalts-Export.
+> Weist die zentrale Schema-Prüfung einen Aufruf vor dem Handler ab, gilt das
+> für **alle** Argumentwerte, auch deklarierte: Nur Schlüsselnamen mit
+> `[REDACTED]` stehen im Ereignis und im Inhalt samt Export.
 
 > **Automatisch redigiert:** Bei einem schreibenden Datei-Upload-Tool wird der
 > File-Quell-Parameter (der base64-Inhalt) **immer** redigiert — unabhängig von
@@ -772,7 +1092,7 @@ die KI einen Prozess (lesen → schreiben, auch quellen-übergreifend matchen),
 > Standard, wirkt in allen String-Parametern und über Integrationen hinweg;
 > abgeschaltet wird sie in der Betreiber-Oberfläche je Integration/Werkzeug. Der
 > `write:`-Block unten **lädt weiterhin, steuert aber nichts mehr** — neue Specs
-> deklarieren ihn nicht. Begründung und Preis: `docs/privacy-mode.md` §4.
+> deklarieren ihn nicht. Begründung und Preis: (Produkt-Doku, nicht öffentlich) §4.
 
 ```yaml
 tools:
@@ -858,7 +1178,7 @@ konsistent halten muss.
   (das Ziel-Feld muss dafür unter `write` stehen).
 - **Es gibt kein `name`- und kein `adresse`-Muster** (und wird keines geben). Ein
   Muster kann dafür nicht halten, was ein Katalogeintrag verspricht: „Müller GmbH"
-  trifft man, „Musterküchen am Markt, Inh. M. Muster" nicht. Ein solcher Eintrag
+  trifft man, „Beispielbetrieb am Markt, Inh. Beispielperson" nicht. Ein solcher Eintrag
   erzeugte den gefährlicheren Zustand — es *sähe* pseudonymisiert aus.
 - **`geburtsdatum` erkennt die FORM eines Datums plus einen plausiblen
   Jahresbereich (1900–2015, fest gesetzt), nicht seine Bedeutung.** Dadurch fallen
@@ -866,11 +1186,11 @@ konsistent halten muss.
   der Agent arbeitet. Ein **altes Vertragsdatum oder Gründungsjahr** aus dem
   Fenster wird weiterhin getroffen: nicht blind auf jedes Freitextfeld legen.
 - **Der Honigtopf wächst schneller:** ein Eintrag je **Treffer** statt je
-  deklariertem Feld (`docs/privacy-mode.md` §6).
+  deklariertem Feld.
 
 **Sicherheit & Grenzen (verbindlich):**
 - ~~**Scope-gebundene Reversal**~~ — **mit #343 aufgegeben** (PO-Entscheid,
-  `docs/privacy-mode.md` §4). Ein Token aus Connector A wird in einem Write nach
+  (Produkt-Doku, nicht öffentlich) §4). Ein Token aus Connector A wird in einem Write nach
   B **aufgelöst**; die Rückwandlung ist der Standard und wirkt über
   Integrationen hinweg. Der Abschalter dafür sitzt in der Betreiber-Oberfläche,
   nicht in der Spec: er ist eine Entscheidung über die ZIELSYSTEME des
@@ -892,7 +1212,39 @@ konsistent halten muss.
   Pass-through-Identitäten (Name, IBAN, Adresse, Kunden-/Steuernummer, E-Mail).
 - **Ehrliche Grenze:** Privacy Mode funktioniert für Werte, die die KI **trägt/
   matcht**, nicht für Werte, über die sie **urteilen** muss (Schwellwerte, Summen).
-  Details: `docs/compliance-roadmap.md`.
+  Details: (Produkt-Doku, nicht öffentlich).
+
+## Eigene Spec eines Teams (Integrations-Stufe 3)
+
+Ein Team auf Integrations-Stufe 3 legt eine Spec in diesem Format selbst an
+(Oberfläche: „Neue Integration" → „Eigene REST-Spec"; REST:
+`POST /api/admin/team-integrations/{teamID}/spec`, (Produkt-Doku, nicht öffentlich)). Weil
+das Team damit das Ziel bestimmt, gelten über dieses Format hinaus:
+
+- `name` beginnt mit `<team-slug>-` und liegt — nach Kleinschreibung, `-` als
+  `_` gelesen — weder im Bereich `script_` noch in dem eines
+  Gateway-Werkzeugs (`memory_…`, `kartei_…`, `ping`, …); dasselbe gilt für
+  jeden entstehenden Werkzeugnamen.
+- `base_url` und `auth.token_url` sprechen `https` und zeigen auf einen
+  öffentlichen Host (kein Loopback, link-local, CGNAT, privates Netz — auch
+  nicht über einen Namen, der dorthin auflöst; geprüft bei der Anlage, beim
+  Laden und bei jedem Verbindungsaufbau).
+- `auth.credential` liegt im Namensraum des Teams; `auth.type:
+  oauth2_on_behalf_of` und `oauth2_token_exchange` sind nicht erlaubt.
+- `description`-Texte erscheinen beim Agenten bereinigt (Zeilenumbrüche zu
+  Leerzeichen, Steuer- und Bidi-Zeichen entfernt, höchstens 1000 Zeichen).
+- `read_via_post` ist nicht erlaubt (400): Ein `POST` ist in einer eigenen
+  Spec immer ein Schreibwerkzeug (`write: true`).
+- Lese-Werkzeuge stehen den Mitgliedern des Teams danach zur Verfügung;
+  `write: true`-Werkzeuge gibt nur die Verwaltung tool-genau frei.
+- **„Lesend" ist dabei eine Selbstauskunft des Teams:** Auch ein
+  Lese-Werkzeug trägt seine Parameter an das selbst gewählte Ziel, und die
+  Beschreibungen eines Mitglieds erreichen die Agenten aller Mitglieder.
+  Stufe 3 heißt also: Jedes Mitglied kann Werkzeuge für die Agenten aller
+  Mitglieder schreiben, die Daten an ein selbst gewähltes Ziel senden.
+- **Rollback:** Senkt die Verwaltung das Team unter Integrations-Stufe 3,
+  ruht die eigene Integration: Sie wird nicht geladen, aber nicht gelöscht.
+- Die Spec lässt sich nicht bearbeiten — löschen und neu anlegen.
 
 ## Validierung & Probe
 
@@ -904,8 +1256,10 @@ jnpt connector check demo-erp      # nur einen
 Vier Stufen pro Connector: (1) Spec gültig, (2) Auth-Werte ausgefüllt — kein
 Vorlagen-Platzhalter mehr in `auth.token_url`/`auth.client_id` (Story #709; nur
 bei `auth.type: oauth2_client_credentials` relevant, siehe
-[App-only-Token](#app-only-token-authtype-oauth2_client_credentials)), (3)
-referenziertes Credential im Vault vorhanden, (4) Probe-Aufruf gegen die echte
+[App-only-Token](#app-only-token-authtype-oauth2_client_credentials)) und —
+heute bei jeder Spec — keine Null-GUID mehr in `base_url` oder einem
+Werkzeug-Pfad; heute auch kein reservierter Platzhalter-Host in den
+Feldern aus `connector.InstanceFields`, (3) referenziertes Credential im Vault vorhanden, (4) Probe-Aufruf gegen die echte
 API (das `check: true`-Tool bzw. das erste Tool ohne Pflichtparameter). Schlägt
 eine Stufe fehl, sagt die Ausgabe genau welche — Exit-Code ≠ 0 macht das
 skriptbar.
@@ -958,7 +1312,7 @@ Scheduler): Cron, CI oder die Admin-GUI rufen ihn in beliebiger Kadenz. Exit-Cod
 wie überall **body- und secret-frei** (Status + knappe Erklärung, nie ein
 Upstream-Body, nie das Credential — auch wenn das Zielsystem es zurückspiegelt).
 Dasselbe Urteil liefert `POST /api/admin/connectors/{name}/selftest` (für die GUI
-und externe Trigger), siehe `docs/admin-api.md`.
+und externe Trigger), siehe (Produkt-Doku, nicht öffentlich).
 
 ## Vertrags-Tests (CI) — „Prod-Fehler → neuer Golden-Test"
 
@@ -979,23 +1333,24 @@ Das ist das Herzstück der **Antifragilität**: Tritt in Produktion ein Fehler a
 passierter Fall), wird er **einmal** als neuer Golden-Test nachgestellt. Danach
 schlägt jede Regression dieses Verhaltens sofort in CI fehl — derselbe Fehler
 kann nie wieder unbemerkt zurückkommen. Wie man einen Vertrag für einen neuen
-Connector hinzufügt, steht in `internal/connector/runtime/CLAUDE.md` (Abschnitt
+Connector hinzufügt, steht in (Produkt-Doku, nicht öffentlich) (Abschnitt
 „Contract-/Golden-Test-Harness"); das Harness selbst liegt in
-`internal/connector/contracttest`.
+(Produkt-Doku, nicht öffentlich).
 
 ## Wann ist dieses Format *nicht* das richtige Werkzeug?
 
-Das Format beschreibt bewusst **einen einfachen GET-Aufruf pro Tool** plus
-**zwei** schreibende Formen (POST + Datei-Upload, POST + JSON-Body). Wenn du
+Das Format beschreibt einen einfachen GET-Aufruf oder einen deklarierten
+lesenden POST pro Tool sowie **zwei** schreibende Formen (POST + Datei-Upload,
+POST + JSON-Body). Wenn du
 andere Schreiboperationen (PUT/PATCH/DELETE), mehrstufige Abläufe (erst
-Login-Token holen, dann Daten), das Hochladen mehrerer Dateien, automatisches
+weitere Werkzeuge aufrufen; der deklarierte Session-Login gehört zur Auth), das Hochladen mehrerer Dateien, automatisches
 Durchblättern aller Seiten oder komplexe Umformungen brauchst, ist ein
 **eigener (externer) MCP-Server** der bessere Weg — JanuaPort bindet ihn genauso mit
 Auth und Audit an. Im Zweifel: kleiner halten und nachfragen.
 
 Und wenn das Bestandssystem **gar keine brauchbare API hat**, aber eine
 Datenbank, in die du lesen darfst: Dafür gibt es die dritte Integrationsart,
-**hinterlegte SELECT-Abfragen als MCP-Tools** —
-[`docs/db-connector-spec.md`](db-connector-spec.md) (read-only, PostgreSQL).
+**hinterlegte, parametrisierte SQL-Abfragen als MCP-Tools** —
+[`docs/db-connector-spec.md`](db-connector-spec.md) (PostgreSQL und SQL Server; deklarierte SELECT-, INSERT- und UPDATE-Tools).
 Wo es eine API gibt, ist sie trotzdem vorzuziehen: Eine API ist ein Vertrag, ein
 Datenbankschema nicht.

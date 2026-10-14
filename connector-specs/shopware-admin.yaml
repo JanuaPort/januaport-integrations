@@ -1,0 +1,370 @@
+# Shopware 6 über die Admin API — Produkte (Bestand, Preis), Bestellungen,
+# Positionen, Lieferungen und Kunden lesen. Read-only, nur GET.
+#
+# API: https://<shop>/api/<entity> (Admin API, Shopware 6.7)
+# Doku: Admin API, Authentifizierung und Integrationen
+# https://github.com/shopware/docs/tree/main/guides/development/integrations-api
+# (index.md, auth-api-requests.md, search-criteria.md,
+# request-headers.md — geprüft 29.09.2026)
+# Quelltext: github.com/shopware/shopware, Tag v6.7.14.2 — geprüft 29.09.2026:
+# src/Core/Framework/DataAbstractionLayer/Search/RequestCriteriaBuilder.php
+# (GET-Query: limit, page, term, filter[feld]=wert, includes, sort)
+# src/Core/Framework/Api/Response/Type/Api/JsonType.php
+# (Antwort {total, data, aggregations} bei Accept: application/json)
+# src/Core/Framework/Api/Controller/AuthController.php und
+# src/Core/Framework/Api/OAuth/ScopeRepository.php (Token, Scopes)
+# Anleitung: (Produkt-Doku, nicht öffentlich) (ACL-Rolle nur mit Leserechten,
+# Integration ohne Admin-Schalter, Secret in den Vault, TLS)
+#
+# ⚠️ DIESE DATEI IST EINE VORLAGE. Zwei Werte sind shopspezifisch: der Host in
+# `base_url` UND in `auth.token_url` (`shop.example.com` — beide Stellen
+# ersetzen, der Token kommt vom Shop selbst) und die `client_id` (Null-GUID,
+# durch die Zugangs-ID der Integration ersetzen, beginnt mit SWIA…). Das
+# SECRET der Integration steht NIE hier, sondern nur im Vault unter dem Namen
+# "shopware-admin".
+#
+# ⚠️ SCOPE `write` — EIN FORMALWERT, KEIN RECHT. Shopware registriert genau drei
+# Scopes (write, admin, user-verified) und weist jeden anderen mit 400 ab; das
+# Format verlangt mindestens einen. Für eine Integration ist der Scope
+# wirkungslos: Die Rechte kommen ALLEIN aus der ACL-Rolle der Integration.
+# Deshalb: Integration OHNE Admin-Schalter, mit einer Rolle, die nur die
+# Leserechte aus der Anleitung trägt. Ein PATCH mit diesem Token endet dann mit
+# 403 (live belegt). Access-Tokens laufen nach 600 s ab; JanuaPort holt
+# rechtzeitig einen neuen.
+#
+# ENVELOPE-ABGLEICH gegen Doku und Quelltext:
+# * `Authorization: Bearer <token>` — die Runtime setzt ihn aus
+# `auth.template`, den Token holt (Produkt-Doku, nicht öffentlich) per Form-Body
+# (grant_type=client_credentials, client_id, client_secret, scope).
+# * `Accept: application/json` — PFLICHT und hier ausdrücklich deklariert:
+# ohne ihn (oder mit */*) antwortet Shopware im JSON:API-Format
+# (ResponseFactoryRegistry), und die Projektionen liefen ins Leere.
+# * `sw-inheritance: 1` nur bei search_products — Varianten erben dann Name
+# und Preis vom Hauptprodukt, statt null zu zeigen.
+# * Kein `sw-version-id` (nur die Live-Version wird gelesen). Wer Texte in
+# einer anderen Sprache als der Systemsprache will, setzt auf Spec-Ebene
+# unter `headers:` die Sprach-ID des Shops ein (Vorlage, nicht aktiv):
+# sw-language-id: 2fbb5fe2e29a4d70aa5854ce7ce3e20b
+#
+# FORMAT-REGELN DES SCHNITTS:
+# * GET-Listen statt `POST /api/search`: Als GET-Query fällt jeder optionale
+# Filter sauber weg, wenn der Agent ihn nicht setzt — ein leeres
+# `filter[x]=` wiese Shopware mit „must not be blank" ab.
+# * Filter NUR in der einfachen Form `filter[<feld>]={param}` (Gleichheit,
+# UND-verknüpft). Keine Datumsspannen: Shopware lässt die einfache Form und
+# die Listen-Form (range) nicht mischen.
+# * `limit` steht KONSTANT auf 25; geblättert wird über `page`. Der Agent kann
+# den Deckel nicht anheben.
+# * `includes[<apiAlias>][i]` sind FESTE Feldlisten mit EXPLIZITEN Indizes:
+# Die Runtime setzt Query-Werte per Namen (url.Values.Set), ein doppelter
+# Name `includes[order][]` behielte nur den letzten Eintrag. Nicht gelistete
+# Felder verlassen den Shop gar nicht erst.
+# * `associations[<feld>][limit]=1` lädt eine Beziehung, die die Admin API
+# nicht von selbst lädt (Status, Versandart). Konstant, nie ein Parameter.
+# * Die `response`-Projektion ist die ZWEITE Whitelist: Was dort nicht steht,
+# erreicht die KI nicht — auch wenn ein Shop (Plugin, andere Version) mehr
+# schickt, als die includes verlangen.
+#
+# DATENSCHUTZ:
+# * search_orders zeigt vom Besteller NUR die Kundennummer (orderCustomer →
+# includes[order_customer]); keine Namen, keine E-Mail, keine Adressen.
+# Deshalb gibt es dort auch keinen Freitext-`term`: Er durchsuchte Namen und
+# Adressen der Besteller.
+# * list_deliveries nennt NIE die Lieferadresse (shippingOrderAddress) — sie
+# steht weder in den includes noch in der Projektion.
+# * search_customers liefert Name, E-Mail und Firma (der Zweck des
+# Werkzeugs), aber keine Adressen (addresses, defaultBillingAddress, …),
+# keinen Geburtstag (birthday) und kein Telefon. Rechnungsadressen
+# (billingAddress) kommen in keinem Werkzeug vor.
+# * Die Such- und Kundennummer-Eingaben stehen in `redact_params` und
+# erscheinen im Audit nur redigiert.
+#
+# PRIVACY: bewusst KEIN `privacy:`-Block in der Vorlage. Welche Kundenfelder
+# pseudonymisiert gehören, entscheidet der Betreiber. Vorlage zum Ergänzen am
+# Werkzeug search_customers (Format: docs/connector-spec.md, Abschnitt Privacy):
+#
+# privacy:
+# read:
+# - {field: email, label: email}
+# - {field: firstName, label: name}
+# - {field: lastName, label: name}
+# - {field: company, label: firma}
+#
+# RATE LIMITS: Die Admin API nennt keine festen Grenzen. `min_interval: 200ms`
+# ist eine konservative Selbstbremse (~5 Aufrufe/s), keine Zusage.
+#
+# BEWUSST NICHT DRIN: kein Schreiben, kein
+# `POST /api/search`, keine Datumsspannen, keine Store-API (Storefront), kein
+# `sw-version-id`, keine Dokumente (Rechnungs-PDFs), keine Zahlungen.
+
+name: shopware-admin
+# Fassung dieser Vorlage — siehe demo-erp.yaml für die Bedeutung.
+version: "1.0.0"
+description: >
+  Shopware 6 shop via the Admin API, read-only: search products (stock,
+  price), orders, order line items, deliveries and customers. Every list
+  returns at most 25 records per call and pages with page.
+# PLATZHALTER — durch die eigene Shop-Adresse ersetzen (https://…).
+base_url: https://shop.example.com
+
+auth:
+  type: oauth2_client_credentials
+  header: Authorization
+  template: "Bearer {{credential}}"
+  # Vault-Name des SECRETS der Integration (jnpt credential set --name shopware-admin).
+  credential: shopware-admin
+  # PLATZHALTER — derselbe Host wie base_url; der Pfad bleibt /api/oauth/token.
+  token_url: https://shop.example.com/api/oauth/token
+  # PLATZHALTER — durch die Zugangs-ID der Integration ersetzen (SWIA…).
+  client_id: "00000000-0000-0000-0000-000000000000"
+  # Formalwert, siehe Kopf: für Integrationen wirkungslos, andere Werte → 400.
+  scopes: ["write"]
+
+headers:
+  Accept: application/json
+
+timeout: 30s
+min_interval: 200ms
+
+redact_params: [customer_query, customer_number]
+
+tools:
+  - name: check
+    description: >
+      Health check: returns the Shopware version of the shop. Changes nothing.
+      Use it first when calls fail: HTTP 401 means the integration's access
+      key or secret is wrong, HTTP 403 on another tool means the integration's
+      role lacks the read right for that entity.
+    # Probe für `jnpt connector check` — parameterlos, braucht kein ACL-Recht.
+    check: true
+    request:
+      method: GET
+      path: /api/_info/version
+    response: "{version: version}"
+
+  - name: search_products
+    description: >
+      Searches products. Returns per product: id, parentId (set for a variant,
+      null for a main product), productNumber, name, active, stock,
+      availableStock (stock minus open orders) and price (list per currency
+      with currencyId, net and gross). Variants inherit name and price from
+      their main product. All filters are optional and combined with AND.
+      At most 25 products per call; if you get 25, call again with page 2,
+      3, … Read-only.
+    params:
+      - name: q
+        description: Optional. Search term (name, product number, EAN, …), ranked by relevance.
+        type: string
+      - name: product_number
+        description: Optional. Exact product number, e.g. SW-10001.
+        type: string
+      - name: page
+        description: Optional. Page number, starting at 1 (25 records per page).
+        type: integer
+    headers:
+      sw-inheritance: "1"
+    request:
+      method: GET
+      path: /api/product
+      query:
+        - {name: limit, value: "25"}
+        - {name: page, value: "{page}"}
+        - {name: term, value: "{q}"}
+        - {name: "filter[productNumber]", value: "{product_number}"}
+        - {name: "includes[product][0]", value: id}
+        - {name: "includes[product][1]", value: parentId}
+        - {name: "includes[product][2]", value: productNumber}
+        # `translated` statt `name`: Mit sw-inheritance bleibt das rohe `name`
+        # einer Variante null, der geerbte Name steht in translated.name
+        # (live belegt 29.09.2026).
+        - {name: "includes[product][3]", value: translated}
+        - {name: "includes[product][4]", value: active}
+        - {name: "includes[product][5]", value: stock}
+        - {name: "includes[product][6]", value: availableStock}
+        - {name: "includes[product][7]", value: price}
+        - {name: "includes[price][0]", value: currencyId}
+        - {name: "includes[price][1]", value: net}
+        - {name: "includes[price][2]", value: gross}
+    response: >-
+      {products: data[*].{id: id, parentId: parentId,
+      productNumber: productNumber, name: translated.name, active: active,
+      stock: stock,
+      availableStock: availableStock,
+      price: price[*].{currencyId: currencyId, net: net, gross: gross}}}
+
+  - name: search_orders
+    description: >
+      Searches orders, newest first. Returns per order: id, orderNumber,
+      orderDateTime, amountTotal (gross), amountNet, currencyId, state
+      (technical name: open, in_progress, completed or cancelled) and
+      customerNumber. It never returns the buyer's name, e-mail or address.
+      All filters are optional and combined with AND. At most 25 orders per
+      call; page with page. Use the id as order_id in list_order_line_items
+      and list_deliveries. Read-only.
+    params:
+      - name: order_number
+        description: Optional. Exact order number, e.g. 10001.
+        type: string
+      - name: state
+        description: Optional. Order state (technical name).
+        type: string
+        enum: [open, in_progress, completed, cancelled]
+      - name: customer_number
+        description: Optional. Exact customer number of the buyer, e.g. from search_customers.
+        type: string
+      - name: page
+        description: Optional. Page number, starting at 1 (25 records per page).
+        type: integer
+    request:
+      method: GET
+      path: /api/order
+      query:
+        - {name: limit, value: "25"}
+        - {name: page, value: "{page}"}
+        - {name: sort, value: "-orderDateTime"}
+        # stateMachineState lädt die Admin API NICHT automatisch — ohne diese
+        # Zeile kam der Status als null (live belegt 29.09.2026). Der Wert ist
+        # nur ein Anker, denn eine Association muss als Liste ankommen.
+        - {name: "associations[stateMachineState][limit]", value: "1"}
+        - {name: "filter[orderNumber]", value: "{order_number}"}
+        - {name: "filter[stateMachineState.technicalName]", value: "{state}"}
+        - {name: "filter[orderCustomer.customerNumber]", value: "{customer_number}"}
+        - {name: "includes[order][0]", value: id}
+        - {name: "includes[order][1]", value: orderNumber}
+        - {name: "includes[order][2]", value: orderDateTime}
+        - {name: "includes[order][3]", value: amountTotal}
+        - {name: "includes[order][4]", value: amountNet}
+        - {name: "includes[order][5]", value: currencyId}
+        - {name: "includes[order][6]", value: stateMachineState}
+        - {name: "includes[order][7]", value: orderCustomer}
+        - {name: "includes[state_machine_state][0]", value: technicalName}
+        - {name: "includes[order_customer][0]", value: customerNumber}
+    response: >-
+      {orders: data[*].{id: id, orderNumber: orderNumber,
+      orderDateTime: orderDateTime, amountTotal: amountTotal,
+      amountNet: amountNet, currencyId: currencyId,
+      state: stateMachineState.technicalName,
+      customerNumber: orderCustomer.customerNumber}}
+
+  - name: list_order_line_items
+    description: >
+      Lists the line items of ONE order, in their order position. Returns per
+      item: id, position, type (product, promotion, credit, custom or
+      container), label, quantity, unitPrice, totalPrice and productId (null
+      for non-product items). At most 25 items per call; page with page.
+      Read-only.
+    params:
+      - name: order_id
+        description: Required. The order id from search_orders.
+        type: string
+        required: true
+      - name: page
+        description: Optional. Page number, starting at 1 (25 records per page).
+        type: integer
+    request:
+      method: GET
+      path: /api/order-line-item
+      query:
+        - {name: limit, value: "25"}
+        - {name: page, value: "{page}"}
+        - {name: sort, value: position}
+        - {name: "filter[orderId]", value: "{order_id}"}
+        - {name: "includes[order_line_item][0]", value: id}
+        - {name: "includes[order_line_item][1]", value: position}
+        - {name: "includes[order_line_item][2]", value: type}
+        - {name: "includes[order_line_item][3]", value: label}
+        - {name: "includes[order_line_item][4]", value: quantity}
+        - {name: "includes[order_line_item][5]", value: unitPrice}
+        - {name: "includes[order_line_item][6]", value: totalPrice}
+        - {name: "includes[order_line_item][7]", value: productId}
+    response: >-
+      {items: data[*].{id: id, position: position, type: type, label: label,
+      quantity: quantity, unitPrice: unitPrice, totalPrice: totalPrice,
+      productId: productId}}
+
+  - name: list_deliveries
+    description: >
+      Lists deliveries. Returns per delivery: id, orderId, state (technical
+      name: open, shipped, shipped_partially, returned, returned_partially or
+      cancelled), shippingMethod (name), trackingCodes and the planned
+      shipping window (shippingDateEarliest, shippingDateLatest). It never
+      returns the delivery address. All filters are optional and combined
+      with AND. At most 25 deliveries per call; page with page. Read-only.
+    params:
+      - name: order_id
+        description: Optional. Only the deliveries of this order (id from search_orders).
+        type: string
+      - name: state
+        description: Optional. Delivery state (technical name).
+        type: string
+        enum: [open, shipped, shipped_partially, returned, returned_partially, cancelled]
+      - name: page
+        description: Optional. Page number, starting at 1 (25 records per page).
+        type: integer
+    request:
+      method: GET
+      path: /api/order-delivery
+      query:
+        - {name: limit, value: "25"}
+        - {name: page, value: "{page}"}
+        - {name: "filter[orderId]", value: "{order_id}"}
+        - {name: "filter[stateMachineState.technicalName]", value: "{state}"}
+        # Status und Versandart lädt die Admin API nicht automatisch (s. o.).
+        - {name: "associations[stateMachineState][limit]", value: "1"}
+        - {name: "associations[shippingMethod][limit]", value: "1"}
+        - {name: "includes[order_delivery][0]", value: id}
+        - {name: "includes[order_delivery][1]", value: orderId}
+        - {name: "includes[order_delivery][2]", value: stateMachineState}
+        - {name: "includes[order_delivery][3]", value: shippingMethod}
+        - {name: "includes[order_delivery][4]", value: trackingCodes}
+        - {name: "includes[order_delivery][5]", value: shippingDateEarliest}
+        - {name: "includes[order_delivery][6]", value: shippingDateLatest}
+        - {name: "includes[state_machine_state][0]", value: technicalName}
+        - {name: "includes[shipping_method][0]", value: name}
+    response: >-
+      {deliveries: data[*].{id: id, orderId: orderId,
+      state: stateMachineState.technicalName,
+      shippingMethod: shippingMethod.name, trackingCodes: trackingCodes,
+      shippingDateEarliest: shippingDateEarliest,
+      shippingDateLatest: shippingDateLatest}}
+
+  - name: search_customers
+    description: >
+      Searches customers. Returns per customer: id, customerNumber, firstName,
+      lastName, email, company, active, guest (true for a guest checkout),
+      lastOrderDate and orderCount. No postal data, no date of birth, no phone
+      number. All filters are optional and combined with AND. At most 25
+      customers per call; page with page. Read-only.
+    params:
+      - name: customer_query
+        description: Optional. Search term (name, e-mail, customer number, company), ranked by relevance.
+        type: string
+      - name: customer_number
+        description: Optional. Exact customer number, e.g. K-1001.
+        type: string
+      - name: page
+        description: Optional. Page number, starting at 1 (25 records per page).
+        type: integer
+    request:
+      method: GET
+      path: /api/customer
+      query:
+        - {name: limit, value: "25"}
+        - {name: page, value: "{page}"}
+        - {name: term, value: "{customer_query}"}
+        - {name: "filter[customerNumber]", value: "{customer_number}"}
+        - {name: "includes[customer][0]", value: id}
+        - {name: "includes[customer][1]", value: customerNumber}
+        - {name: "includes[customer][2]", value: firstName}
+        - {name: "includes[customer][3]", value: lastName}
+        - {name: "includes[customer][4]", value: email}
+        - {name: "includes[customer][5]", value: company}
+        - {name: "includes[customer][6]", value: active}
+        - {name: "includes[customer][7]", value: guest}
+        - {name: "includes[customer][8]", value: lastOrderDate}
+        - {name: "includes[customer][9]", value: orderCount}
+    response: >-
+      {customers: data[*].{id: id, customerNumber: customerNumber,
+      firstName: firstName, lastName: lastName, email: email,
+      company: company, active: active, guest: guest,
+      lastOrderDate: lastOrderDate, orderCount: orderCount}}
