@@ -9,13 +9,22 @@ freigegebene Hosts/Pfade und feste Berichte.
 `google-search-console.yaml`: get_status, performance_overview, query_summary,
 page_summary. `google-analytics.yaml`: get_status, traffic_summary, landing_pages,
 key_events. Endgültige MCP-Namen verwenden den Instanznamen als Präfix.
-Bridge-Keys sind voneinander unabhängig, nur im Vault/geschützten Hostdateien;
-GSC-Key öffnet keine GA4-Route. Interne base_url http://google-reporting:8092.
+Beide Vorlagen nennen dieselbe Connector-Credential `google-reporting`: **ein**
+Bridge-Key für beide Quellen, gleich dem `runtime-key` der Stelle
+`plugin-google-reporting`. Der Bridge-Key ist ein Zufallswert, den kein Mensch kennen
+muss: Der Betreiber erzeugt ihn auf der Anlage und setzt ihn per Betreiber-CLI über
+stdin in die Stelle und mit demselben Wert in die Credential; danach wird er
+verworfen (nie in Chat, Log oder Datei). Nur das Servicekonto-JSON (Stelle
+`plugin-google-reporting-google`) trägt der Admin in der Admin-GUI unter
+Basis-Einrichtung ein. Beides steht nur im Tresor (auf der Anlage als RAM-Datei); die
+Rechte je Werkzeug prüft das Gateway. Interne base_url
+http://google-reporting:8092.
 
 ## Betreiberfolge
 
 1. Vollständiges Runbook im Plugin `google-reporting/README.md` abarbeiten:
-   zweckgebundenes Servicekonto/Property-Lesegrants, syntaktisch geprüfte Secretdatei,
+   zweckgebundenes Servicekonto/Property-Lesegrants, Servicekonto-JSON nur über die
+   Admin-GUI (Basis-Einrichtung) eintragen und die heruntergeladene Datei löschen,
    Zeitzone,1–50 exakte öffentliche Pfade in disjunkten atas/gateway/shared-Gruppen,
    explizite kanonische URLs. Keine personenbezogenen Pfade. GA filtert immer
    landingPage UND hostName; feste Kombinationen live prüfen.
@@ -27,7 +36,9 @@ GSC-Key öffnet keine GA4-Route. Interne base_url http://google-reporting:8092.
    Werte trotzdem im Audit-Inhalt stehen. Einstellung ist je Zugangsklasse,
    nicht je Integration. Bei verbindlich höherer Tiefe eigener LEAD/SEC-Schnitt;
    diese Vorlagen verändern keine globale Einstellung.
-4. Zwei Vault-Credentials google-search-console und google-analytics anlegen,
+4. Die Vault-Credential `google-reporting` (Wert gleich `runtime-key` der Stelle
+   `plugin-google-reporting`) setzt der Betreiber per `jnpt credential set` über stdin
+   zusammen mit der Stelle (Runbook im Plugin `google-reporting/README.md`),
    daraus bewusst **corp**-Instanzen erstellen. Team-Selbstanlage erlaubt nur
    öffentliche HTTPS-Ziele. Admin-MCP benötigt target_address-Schalter für private
    Ziele; alternativ Betreiberweg. Nur vorgesehenem INBOUND-Zugang Rechte geben.
@@ -59,8 +70,9 @@ GA-Sessions sind keine GSC-Klicks. KeyEvents sind bestehende freigegebene Ereign
 keine qualifizierten Leads/Odoo-Ergebnisse. Fehlender oder für den Zeitraum
 ungültiger Messvertrag liefert not_configured; Traffic bleibt nutzbar.
 
-**Query-Sicht ist standardmäßig deaktiviert**, bis SEC den verbleibenden Freitext
-akzeptiert. Dienst unterdrückt Gruppen unter query_min_impressions (mindestens 10).
+**Query-Sicht ist standardmäßig deaktiviert** (Betreiberschalter `query_enabled`;
+erster Start mit `false`, danach ohne weitere SEC-Prüfung einschaltbar, sobald die
+Zahlenberichte live belegt sind). Dienst unterdrückt Gruppen unter query_min_impressions (mindestens 10).
 Vorlage scannt rekursiv das JSON-Feld query mit email/telefon/iban. Keine
 Anonymisierung und keine Erkennung aller Namen. Numerische Berichte können separat
 freigegeben werden. GA-Landingpage-/Key-Event-Mindestgröße wird im Messvertrag
@@ -74,10 +86,13 @@ Dienstlog nur Route/Code/Dauer. JanuaPort zeigt Nicht-2xx als bestehende Statusm
 und unterdrückt den Body; normale Fehler werden nie leere HTTP200-Erfolgsberichte.
 get_status bietet feste Diagnosezustände ohne Property-ID/Google-Rohfehler.
 
-Stop/Deaktivierung: Fehler statt Nullbericht. Rotation erfordert neue geschützte
-Dateien, Container-Recreate, Vault-Abgleich, positive Probe und Widerruf der alten
-Keys. Host-Secrets gehören nicht automatisch zum Vaultbackup. Vollständiger Rückbau
-entfernt Connectorrechte/-instanzen und widerruft Google-Grants/Bridge-Keys;
+Stop/Deaktivierung: Fehler statt Nullbericht. Rotation: Bridge-Key neu
+erzeugen und in Stelle und Credential setzen, Servicekonto-JSON in der Admin-GUI
+eintragen (das Unit-Paar des Plugins erzeugt den Container neu), positive Probe,
+alten Google-Schlüssel in der Cloud Console löschen. Die Schlüssel reisen mit dem
+Tresor im Backup. **Entfernen ist kein Widerruf:** Der Google-Schlüssel bleibt gültig,
+bis er in der Cloud Console gelöscht ist. Vollständiger Rückbau entfernt
+Connectorrechte/-instanzen und widerruft Google-Grants/Bridge-Key;
 Plugin-Purge erledigt das nicht automatisch. Signierter Service-Katalog/Image-
 Digest wird erst im getrennten GATE/VENDOR-Release bereitgestellt.
 

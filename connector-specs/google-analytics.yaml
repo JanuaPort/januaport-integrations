@@ -3,7 +3,9 @@
 # Configure as corp integration. Internal target_address approval required.
 # Audit depth MUST be metadaten for SSO and token callers before activation.
 # All declared parameters are redacted; higher audit depth stores declared input.
-# Query text remains disabled by service default until SEC accepts residual risk.
+# Query text is disabled by default in the service (operator switch).
+# Credential google-reporting is the same in both Google reporting templates;
+# its value equals the runtime-key of the plugin place plugin-google-reporting.
 # Official contracts: developers.google.com/webmaster-tools/v1/searchanalytics/query
 # developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/properties/runReport
 name: google-analytics
@@ -16,7 +18,7 @@ base_url: http://google-reporting:8092
 auth:
   header: Authorization
   template: "Bearer {{credential}}"
-  credential: google-analytics
+  credential: google-reporting
 timeout: 25s
 min_interval: 500ms
 redact_params: [period_days, end_date, segment, limit]

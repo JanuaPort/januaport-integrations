@@ -103,7 +103,7 @@ gelaufen, im Backlog dokumentiert.
 
 | Spec | Werkzeuge | Stand |
 |---|---|---|
-| [`google-search-console.yaml`](connector-specs/google-search-console.yaml) (1.0.0) | 4, lesend | Gebaut, synthetisch geprüft; Live-Abnahme offen. Privater Beisteller, feste öffentliche Seitenliste. Query-Freitext bis SEC gesperrt; Auditmetadaten nötig. |
+| [`google-search-console.yaml`](connector-specs/google-search-console.yaml) (1.0.0) | 4, lesend | Gebaut, synthetisch geprüft; Live-Abnahme offen. Privater Beisteller, feste öffentliche Seitenliste. Query-Freitext standardmäßig gesperrt (Betreiberschalter); Auditmetadaten nötig. |
 | [`google-analytics.yaml`](connector-specs/google-analytics.yaml) (1.0.0) | 4, lesend | Gebaut, synthetisch geprüft; Live-Abnahme offen. Feste GA4-Aggregate, Host-/Seitenfilter, optionaler Key-Event-Messvertrag. |
 | [`demo-erp.yaml`](connector-specs/demo-erp.yaml) | 2, lesend | **Gebaut, nur zur Vorführung.** Attrappe für den Rundgang — spricht ein erfundenes ERP an, kein echtes System. Braucht das Beispiel-ERP aus dem Produkt-Repository. |
 | [`dokumente.yaml`](connector-specs/dokumente.yaml) | 4, lesend | **Gebaut.** Live belegt (20.09.2026): alle vier Prüfstufen grün, Suche über `/mcp` mit erwartetem Treffer, Audit mit redigiertem Suchbegriff. Vorlage — ein Wissensbereich je Integration. |
@@ -148,4 +148,4 @@ zugleich das Muster dafür, wie eine Spec dokumentiert sein sollte.
 
 ## Google Reporting (#1130)
 
-[Search Console und GA4](docs/connector-google-reporting.md): zwei Vorlagen 1.0.0, acht feste Lesewerkzeuge über den privaten Google-Reporting-Beisteller. Stufe 1, gebaut/synthetisch geprüft; Live-Abnahme offen. Queryfreitext bleibt bis SEC gesperrt; Auditmetadaten sind Betriebsbedingung.
+[Search Console und GA4](docs/connector-google-reporting.md): zwei Vorlagen 1.0.0, acht feste Lesewerkzeuge über den privaten Google-Reporting-Beisteller. Stufe 1, gebaut/synthetisch geprüft; Live-Abnahme offen. Queryfreitext bleibt standardmäßig gesperrt (Betreiberschalter); beide Vorlagen nutzen eine Connector-Credential `google-reporting`; Auditmetadaten sind Betriebsbedingung.
