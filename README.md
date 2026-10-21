@@ -35,9 +35,9 @@ reviewed from outside without anyone touching the gateway.
 
 | Folder | Contents |
 |---|---|
-| [`connector-specs/`](connector-specs/) | The shipped REST specs, fifteen of them, see the table below. |
+| [`connector-specs/`](connector-specs/) | The shipped REST specs, seventeen of them, see the table below. |
 | [`upstream-specs/`](upstream-specs/) | Example configuration for an **MCP upstream** (a third-party MCP server under our governance): `github.yaml`. |
-| [`docs/`](docs/) | The four format contracts, the build discipline and two operator guides. |
+| [`docs/`](docs/) | The four format contracts, the build discipline and three operator guides. |
 | [`examples/`](examples/) | Attachments to the guides (today: the Exchange script for the single-mailbox limit). |
 
 ## The four format contracts
@@ -99,6 +99,8 @@ system and documented in the backlog.
 
 | Spec | Tools | Status |
 |---|---|---|
+| [`google-search-console.yaml`](connector-specs/google-search-console.yaml) (1.0.0) | 4, read-only | Built; synthetic contracts verified, live acceptance pending. Private sidecar, fixed public page allowlist. Query text disabled until SEC review; metadata audit depth required. |
+| [`google-analytics.yaml`](connector-specs/google-analytics.yaml) (1.0.0) | 4, read-only | Built; synthetic contracts verified, live acceptance pending. Fixed GA4 aggregates, hostname/page filters; optional key-event measurement contract. |
 | [`demo-erp.yaml`](connector-specs/demo-erp.yaml) | 2, read-only | **Built, demo only.** A mock for the walkthrough: it talks to an invented ERP, not a real system. Needs the example ERP from the product repository. |
 | [`dokumente.yaml`](connector-specs/dokumente.yaml) | 4, read-only | **Built.** Verified live (20 September 2026): all four check stages green, search via `/mcp` with the expected hit, audit entry with redacted search term. Template: one knowledge area per integration. |
 | [`lexware-office.yaml`](connector-specs/lexware-office.yaml) | 6, of which 2 write | **Built.** Reading verified live. The two writing tools (upload document, attach document image) are built; **live evidence of the write path is pending**. |
@@ -136,3 +138,7 @@ documented.
 - **There is no stand-alone example file for database and file specs here yet.** The complete example
   is in the format contract itself (section "Vollständiges Beispiel"). File specs are usually generated
   by the product, not written by hand.
+
+## Google Reporting (#1130)
+
+[Search Console and GA4](docs/connector-google-reporting.md): two version 1.0.0 templates expose eight fixed read tools through the private Google Reporting sidecar. Stage 1: built and tested with synthetic data; live acceptance is pending. Query text stays disabled until SEC review; metadata audit depth is an operating prerequisite.
