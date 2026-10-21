@@ -1,0 +1,128 @@
+# #1130: fixed read-only reports from the private google-reporting service.
+# Stufe 1 — gebaut, noch nicht live abgenommen. No Google identity in JanuaPort.
+# Configure as corp integration. Internal target_address approval required.
+# Audit depth MUST be metadaten for SSO and token callers before activation.
+# All declared parameters are redacted; higher audit depth stores declared input.
+# Query text is disabled by default in the service (operator switch).
+# Credential google-reporting is the same in both Google reporting templates;
+# its value equals the runtime-key of the plugin place plugin-google-reporting.
+# Official contracts: developers.google.com/webmaster-tools/v1/searchanalytics/query
+# developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/properties/runReport
+name: google-analytics
+version: "1.0.0"
+description: >
+  Fixed GA4 reports for an operator approved public website.
+  Read-only, exact public page allowlist, 28 or 90 inclusive source-local days ending at least
+  three days ago. No user attribution, free dimensions, property discovery or Odoo export.
+base_url: http://google-reporting:8092
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  credential: google-reporting
+timeout: 25s
+min_interval: 500ms
+redact_params: [period_days, end_date, segment, limit]
+tools:
+  - name: get_status
+    description: >
+      Check configured source access with a small read-only Google probe. Fixed states ready,
+      not_configured, access_denied, quota_limited, unavailable. No property IDs or raw errors.
+      This is separate from local container health. GA4 also validates fixed report compatibility.
+    check: true
+    request:
+      method: GET
+      path: /v1/ga4/get_status
+    response: "{schema_version: schema_version, source: source, report: report, state: state, checked_at: checked_at, definition_version: definition_version, report_definitions: report_definitions, key_events: key_events, query_reports: query_reports}"
+  - name: traffic_summary
+    description: >
+      Sessions and engaged sessions by fixed default channel group. GA4 property timezone. Consent and attribution differ from GSC; sessions are not clicks. Existing zero is distinct from no rows.
+      Fixed public segment membership; no account, property, dimension, metric or filter override.
+    params:
+      - name: period_days
+        type: integer
+        description: Optional inclusive period, 28 or 90 days. Default 28.
+      - name: end_date
+        type: string
+        description: Optional ISO date YYYY-MM-DD, at most source today minus three days.
+      - name: segment
+        type: string
+        enum: [all_public, atas, gateway, shared]
+        description: Optional approved disjoint public page group. Default all_public.
+      - name: limit
+        type: integer
+        description: Optional maximum rows, 1 through 100. Default 25. No pagination or export.
+    request:
+      method: GET
+      path: /v1/ga4/traffic_summary
+      query:
+        - name: period_days
+          value: "{period_days}"
+        - name: end_date
+          value: "{end_date}"
+        - name: segment
+          value: "{segment}"
+        - name: limit
+          value: "{limit}"
+    response: "{schema_version: schema_version, source: source, report: report, state: state, range: range, scope: scope, rows: rows, quality: quality, fetched_at: fetched_at, measurement: measurement}"
+  - name: landing_pages
+    description: >
+      Sessions and engaged sessions for exact approved landingPage paths, without querystrings. Small groups suppressed, never rendered as zero.
+      Fixed public segment membership; no account, property, dimension, metric or filter override.
+    params:
+      - name: period_days
+        type: integer
+        description: Optional inclusive period, 28 or 90 days. Default 28.
+      - name: end_date
+        type: string
+        description: Optional ISO date YYYY-MM-DD, at most source today minus three days.
+      - name: segment
+        type: string
+        enum: [all_public, atas, gateway, shared]
+        description: Optional approved disjoint public page group. Default all_public.
+      - name: limit
+        type: integer
+        description: Optional maximum rows, 1 through 100. Default 25. No pagination or export.
+    request:
+      method: GET
+      path: /v1/ga4/landing_pages
+      query:
+        - name: period_days
+          value: "{period_days}"
+        - name: end_date
+          value: "{end_date}"
+        - name: segment
+          value: "{segment}"
+        - name: limit
+          value: "{limit}"
+    response: "{schema_version: schema_version, source: source, report: report, state: state, range: range, scope: scope, rows: rows, quality: quality, fetched_at: fetched_at, measurement: measurement}"
+  - name: key_events
+    description: >
+      Only existing configured GA4 keyEvents, grouped by approved eventName. Meaning and validity come from measurement contract. Not configured returns typed not_configured. These are not qualified leads or Odoo outcomes.
+      Fixed public segment membership; no account, property, dimension, metric or filter override.
+    params:
+      - name: period_days
+        type: integer
+        description: Optional inclusive period, 28 or 90 days. Default 28.
+      - name: end_date
+        type: string
+        description: Optional ISO date YYYY-MM-DD, at most source today minus three days.
+      - name: segment
+        type: string
+        enum: [all_public, atas, gateway, shared]
+        description: Optional approved disjoint public page group. Default all_public.
+      - name: limit
+        type: integer
+        description: Optional maximum rows, 1 through 100. Default 25. No pagination or export.
+    request:
+      method: GET
+      path: /v1/ga4/key_events
+      query:
+        - name: period_days
+          value: "{period_days}"
+        - name: end_date
+          value: "{end_date}"
+        - name: segment
+          value: "{segment}"
+        - name: limit
+          value: "{limit}"
+    response: "{schema_version: schema_version, source: source, report: report, state: state, range: range, scope: scope, rows: rows, quality: quality, fetched_at: fetched_at, measurement: measurement}"

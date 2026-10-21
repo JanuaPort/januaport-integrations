@@ -35,9 +35,9 @@ kann sie von außen beigetragen und geprüft werden, ohne dass jemand das Gatewa
 
 | Ordner | Inhalt |
 |---|---|
-| [`connector-specs/`](connector-specs/) | Die ausgelieferten REST-Specs — 15 Stück, Tabelle unten. |
+| [`connector-specs/`](connector-specs/) | Die ausgelieferten REST-Specs — 17 Stück, Tabelle unten. |
 | [`upstream-specs/`](upstream-specs/) | Beispiel-Konfiguration für einen **MCP-Upstream** (fremder MCP-Server unter unserer Governance): `github.yaml`. |
-| [`docs/`](docs/) | Die vier Format-Verträge, die Bau-Disziplin und zwei Betreiber-Anleitungen. |
+| [`docs/`](docs/) | Die vier Format-Verträge, die Bau-Disziplin und drei Betreiber-Anleitungen. |
 | [`examples/`](examples/) | Beilagen zu den Anleitungen (heute: das Exchange-Skript zur Ein-Postfach-Grenze). |
 
 ## Die vier Format-Verträge
@@ -103,6 +103,8 @@ gelaufen, im Backlog dokumentiert.
 
 | Spec | Werkzeuge | Stand |
 |---|---|---|
+| [`google-search-console.yaml`](connector-specs/google-search-console.yaml) (1.0.0) | 4, lesend | Gebaut, synthetisch geprüft; Live-Abnahme offen. Privater Beisteller, feste öffentliche Seitenliste. Query-Freitext standardmäßig gesperrt (Betreiberschalter); Auditmetadaten nötig. |
+| [`google-analytics.yaml`](connector-specs/google-analytics.yaml) (1.0.0) | 4, lesend | Gebaut, synthetisch geprüft; Live-Abnahme offen. Feste GA4-Aggregate, Host-/Seitenfilter, optionaler Key-Event-Messvertrag. |
 | [`demo-erp.yaml`](connector-specs/demo-erp.yaml) | 2, lesend | **Gebaut, nur zur Vorführung.** Attrappe für den Rundgang — spricht ein erfundenes ERP an, kein echtes System. Braucht das Beispiel-ERP aus dem Produkt-Repository. |
 | [`dokumente.yaml`](connector-specs/dokumente.yaml) | 4, lesend | **Gebaut.** Live belegt (20.09.2026): alle vier Prüfstufen grün, Suche über `/mcp` mit erwartetem Treffer, Audit mit redigiertem Suchbegriff. Vorlage — ein Wissensbereich je Integration. |
 | [`lexware-office.yaml`](connector-specs/lexware-office.yaml) | 6, davon 2 schreibend | **Gebaut.** Lesen live belegt. Die beiden schreibenden Werkzeuge (Beleg hochladen, Belegbild anheften) sind gebaut, **der Live-Beleg des Schreibwegs steht aus**. |
@@ -143,3 +145,7 @@ zugleich das Muster dafür, wie eine Spec dokumentiert sein sollte.
   Beispieldatei** — das vollständige Beispiel steht jeweils im Format-Vertrag selbst
   (Abschnitt „Vollständiges Beispiel“). Datei-Specs erzeugt das Produkt in aller Regel
   selbst, sie werden nicht von Hand geschrieben.
+
+## Google Reporting (#1130)
+
+[Search Console und GA4](docs/connector-google-reporting.md): zwei Vorlagen 1.0.0, acht feste Lesewerkzeuge über den privaten Google-Reporting-Beisteller. Stufe 1, gebaut/synthetisch geprüft; Live-Abnahme offen. Queryfreitext bleibt standardmäßig gesperrt (Betreiberschalter); beide Vorlagen nutzen eine Connector-Credential `google-reporting`; Auditmetadaten sind Betriebsbedingung.
