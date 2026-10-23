@@ -1,0 +1,109 @@
+# Search Console handles for a website team. A separate template, so the read
+# template google-search-console keeps its surface and a whole-integration grant adds no write.
+# Stufe 1 — gebaut und live abgenommen. No Google identity in JanuaPort.
+# Configure as corp integration. Internal target_address approval required.
+# The write tool carries the tool-exact permission; a connector-wide scope grants the reads only.
+# Audit depth MUST be metadaten for SSO and token callers before activation.
+# All declared parameters are redacted; higher audit depth stores declared input.
+# Credential google-reporting is the same in all Google reporting templates;
+# its value equals the runtime-key of the plugin place plugin-google-reporting.
+# The service applies the daily cap (20 write attempts per source) and logs one change line per
+# applied write; see google-reporting/README.md in januaport-plugins.
+# Official contracts: developers.google.com/webmaster-tools/v1/sitemaps/submit
+# developers.google.com/webmaster-tools/v1/urlInspection.index/inspect
+name: google-search-console-manage
+version: "1.0.0"
+description: >
+  Search Console handles for an operator approved public website: list, read and submit
+  sitemaps and read the index status of approved public pages. The property comes from the
+  operator configuration, not from a parameter. Deleting a sitemap is not part of this
+  template.
+base_url: http://google-reporting:8092
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  credential: google-reporting
+timeout: 25s
+min_interval: 500ms
+redact_params: [sitemap_url, page_path, dry_run]
+tools:
+  - name: list_sitemaps
+    description: >
+      Lists the sitemaps registered for the configured Search Console property: path, last
+      submitted and last downloaded time, pending state, the counts of errors and issues and the
+      number of submitted URLs. Read-only.
+    check: true
+    request:
+      method: GET
+      path: /v1/gsc/list_sitemaps
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, items: items, quality: quality, fetched_at: fetched_at}"
+  - name: get_sitemap
+    description: >
+      Reads one registered sitemap. The answer is sitemap_not_found when the URL is not
+      registered for the property. Read-only.
+    params:
+      - name: sitemap_url
+        type: string
+        required: true
+        description: >
+          Absolute https URL of the sitemap on an approved host, ending in .xml, without query,
+          fragment or port.
+    request:
+      method: GET
+      path: /v1/gsc/get_sitemap
+      query:
+        - name: sitemap_url
+          value: "{sitemap_url}"
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, items: items, quality: quality, fetched_at: fetched_at}"
+  - name: inspect_url
+    description: >
+      Reads the Google index status of one approved public page: verdict, coverage state,
+      robots.txt state, indexing state, page fetch state, last crawl time, Google and user
+      canonical and the referring sitemaps. listed_in_sitemap and the referring sitemaps show
+      the state Google recorded when it last processed the page; a freshly submitted sitemap
+      appears there only after Google has read it. The URL Inspection API allows about 2000
+      requests per day and property. It
+      reads the index; it cannot request indexing. Read-only.
+    params:
+      - name: page_path
+        type: string
+        required: true
+        description: Exact approved public path, for example /atas. No URL, query or user path.
+    request:
+      method: GET
+      path: /v1/gsc/inspect_url
+      query:
+        - name: page_path
+          value: "{page_path}"
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, items: items, quality: quality, fetched_at: fetched_at}"
+  - name: submit_sitemap
+    description: >
+      Registers a sitemap URL for the configured Search Console property (sitemaps.submit).
+      Submitting registers the sitemap; it does not trigger crawling. No API exists to request
+      indexing, and Google switched the sitemap ping off in 2023. Submitting an already
+      registered sitemap refreshes its entry. The answer carries before (registered state and
+      last submitted time) and after, with state applied or preview. With dry_run true the
+      service reads the current state and returns the preview without submitting. The service
+      allows 20 write attempts per day and source; failed attempts count, previews are not counted.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "google-search-console-manage:submit_sitemap".
+    write: true
+    params:
+      - name: sitemap_url
+        type: string
+        required: true
+        description: >
+          Absolute https URL of the sitemap on an approved host, ending in .xml, without query,
+          fragment or port.
+      - name: dry_run
+        type: boolean
+        description: Optional. true returns the preview (before and after) without submitting. Default false.
+    request:
+      method: POST
+      path: /v1/gsc/submit_sitemap
+      encoding: json
+      body_json:
+        sitemap_url: "{sitemap_url}"
+        dry_run: "{dry_run}"
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"

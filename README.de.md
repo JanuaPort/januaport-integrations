@@ -105,6 +105,8 @@ gelaufen, im Backlog dokumentiert.
 |---|---|---|
 | [`google-search-console.yaml`](connector-specs/google-search-console.yaml) (1.0.0) | 4, lesend | Gebaut, synthetisch geprüft; Live-Abnahme offen. Privater Beisteller, feste öffentliche Seitenliste. Query-Freitext standardmäßig gesperrt (Betreiberschalter); Auditmetadaten nötig. |
 | [`google-analytics.yaml`](connector-specs/google-analytics.yaml) (1.0.0) | 4, lesend | Gebaut, synthetisch geprüft; Live-Abnahme offen. Feste GA4-Aggregate, Host-/Seitenfilter, optionaler Key-Event-Messvertrag. |
+| [`google-search-console-manage.yaml`](connector-specs/google-search-console-manage.yaml) (1.0.0) | 4, davon 1 schreibend | Gebaut; live belegt (22.10.2026). Sitemaps auflisten, lesen und einreichen, URL-Inspektion. Kein Löschen; Einreichen löst kein Crawling aus. Tagesdeckel und Änderungszeile im Beisteller. |
+| [`google-analytics-manage.yaml`](connector-specs/google-analytics-manage.yaml) (1.0.0) | 6, davon 4 schreibend | Gebaut; live belegt (22.10.2026). GA4-Annotationen und eine Kanalgruppe für KI-Assistenten anlegen und ändern, über die Admin API v1alpha. Kein Löschen; Vorschau per `dry_run`. |
 | [`demo-erp.yaml`](connector-specs/demo-erp.yaml) | 2, lesend | **Gebaut, nur zur Vorführung.** Attrappe für den Rundgang — spricht ein erfundenes ERP an, kein echtes System. Braucht das Beispiel-ERP aus dem Produkt-Repository. |
 | [`dokumente.yaml`](connector-specs/dokumente.yaml) | 4, lesend | **Gebaut.** Live belegt (20.09.2026): alle vier Prüfstufen grün, Suche über `/mcp` mit erwartetem Treffer, Audit mit redigiertem Suchbegriff. Vorlage — ein Wissensbereich je Integration. |
 | [`lexware-office.yaml`](connector-specs/lexware-office.yaml) | 6, davon 2 schreibend | **Gebaut.** Lesen live belegt. Die beiden schreibenden Werkzeuge (Beleg hochladen, Belegbild anheften) sind gebaut, **der Live-Beleg des Schreibwegs steht aus**. |
@@ -149,3 +151,5 @@ zugleich das Muster dafür, wie eine Spec dokumentiert sein sollte.
 ## Google Reporting (#1130)
 
 [Search Console und GA4](docs/connector-google-reporting.md): zwei Vorlagen 1.0.0, acht feste Lesewerkzeuge über den privaten Google-Reporting-Beisteller. Stufe 1, gebaut/synthetisch geprüft; Live-Abnahme offen. Queryfreitext bleibt standardmäßig gesperrt (Betreiberschalter); beide Vorlagen nutzen eine Connector-Credential `google-reporting`; Auditmetadaten sind Betriebsbedingung.
+
+Zwei weitere Vorlagen 1.0.0, `google-search-console-manage` und `google-analytics-manage`, ergänzen Schreibhandgriffe für ein Website-Team: Sitemap einreichen, Annotationen und eine Kanalgruppe für KI-Assistenten anlegen und ändern. Die Lesevorlagen bleiben unverändert, die Schreibwerkzeuge tragen tool-genaue Rechte. Details in der [Anleitung](docs/connector-google-reporting.md).

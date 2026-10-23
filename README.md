@@ -101,6 +101,8 @@ system and documented in the backlog.
 |---|---|---|
 | [`google-search-console.yaml`](connector-specs/google-search-console.yaml) (1.0.0) | 4, read-only | Built; synthetic contracts verified, live acceptance pending. Private sidecar, fixed public page allowlist. Query text disabled by default (operator switch); metadata audit depth required. |
 | [`google-analytics.yaml`](connector-specs/google-analytics.yaml) (1.0.0) | 4, read-only | Built; synthetic contracts verified, live acceptance pending. Fixed GA4 aggregates, hostname/page filters; optional key-event measurement contract. |
+| [`google-search-console-manage.yaml`](connector-specs/google-search-console-manage.yaml) (1.0.0) | 4, 1 of them writing | Built; live verified (2026-10-22). List, read and submit sitemaps, URL inspection. No delete; submitting does not trigger a crawl. Daily cap and change line in the sidecar. |
+| [`google-analytics-manage.yaml`](connector-specs/google-analytics-manage.yaml) (1.0.0) | 6, 4 of them writing | Built; live verified (2026-10-22). Create and update GA4 annotations and one AI assistant channel group via the Admin API v1alpha. No delete; preview via `dry_run`. |
 | [`demo-erp.yaml`](connector-specs/demo-erp.yaml) | 2, read-only | **Built, demo only.** A mock for the walkthrough: it talks to an invented ERP, not a real system. Needs the example ERP from the product repository. |
 | [`dokumente.yaml`](connector-specs/dokumente.yaml) | 4, read-only | **Built.** Verified live (20 September 2026): all four check stages green, search via `/mcp` with the expected hit, audit entry with redacted search term. Template: one knowledge area per integration. |
 | [`lexware-office.yaml`](connector-specs/lexware-office.yaml) | 6, of which 2 write | **Built.** Reading verified live. The two writing tools (upload document, attach document image) are built; **live evidence of the write path is pending**. |
@@ -142,3 +144,5 @@ documented.
 ## Google Reporting (#1130)
 
 [Search Console and GA4](docs/connector-google-reporting.md): two version 1.0.0 templates expose eight fixed read tools through the private Google Reporting sidecar. Stage 1: built and tested with synthetic data; live acceptance is pending. Query text stays disabled by default (operator switch); both templates use one connector credential, `google-reporting`; metadata audit depth is an operating prerequisite.
+
+Two more version 1.0.0 templates, `google-search-console-manage` and `google-analytics-manage`, add write handles for a website team: submit a sitemap, create and update annotations and one AI assistant channel group. The read templates stay unchanged; the write tools carry tool-exact permissions. Details in the [guide](docs/connector-google-reporting.md).
