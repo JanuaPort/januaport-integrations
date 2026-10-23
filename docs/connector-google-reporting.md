@@ -103,3 +103,30 @@ ChatGPT → JanuaPort SSO Neu → Connector → Beisteller → Google.
 
 API: [GSC](https://developers.google.com/webmaster-tools/v1/searchanalytics/query),
 [GA4](https://developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/properties/runReport).
+
+## Schreibhandgriffe (zwei weitere Vorlagen 1.0.0)
+
+`google-search-console-manage.yaml`: list_sitemaps, get_sitemap, inspect_url und
+submit_sitemap (schreibend). `google-analytics-manage.yaml`: list_annotations,
+create_annotation und update_annotation (schreibend), list_channel_groups,
+create_channel_group und update_channel_group (schreibend). Die Lesevorlagen bleiben
+unverändert; die Freigabe einer ganzen Lese-Integration gibt kein Schreibrecht.
+
+- Jedes Schreibwerkzeug trägt ein tool-genaues Recht und kennt `dry_run`; die Antwort
+  zeigt `before` und `after`. Löschen und Archivieren gibt es nicht.
+- Der Beisteller holt für Schreibaufrufe eigene Scopes (`webmasters`, `analytics.edit`),
+  getrennt von den Lesescopes. Site und Property kommen aus der Betreiberkonfiguration.
+- Je Quelle gelten höchstens 20 Schreibversuche am Tag im Serverprozess; jede
+  angewandte Änderung ergibt eine Änderungszeile im Beisteller-Log.
+- Grenzen der Google-APIs: Einreichen einer Sitemap löst kein Crawling aus,
+  „Indexierung beantragen“ hat keine öffentliche API. Annotationen und Kanalgruppen
+  gibt es nur in der Admin API v1alpha, deren Form sich ändern kann.
+- Rechte des Servicekontos: Search Console „Uneingeschränkt“, GA4 „Bearbeiter“.
+
+Live belegt am 22.10.2026: eine Annotation, eine eingereichte Sitemap und eine
+Kanalgruppe, jeweils erst als Vorschau, dann einmal echt.
+
+API: [Sitemaps](https://developers.google.com/webmaster-tools/v1/sitemaps/submit),
+[URL-Inspektion](https://developers.google.com/webmaster-tools/v1/urlInspection.index/inspect),
+[Annotationen](https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1alpha/properties.reportingDataAnnotations),
+[Kanalgruppen](https://developers.google.com/analytics/devguides/config/admin/v1/rest/v1alpha/properties.channelGroups).

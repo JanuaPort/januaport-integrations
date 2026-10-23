@@ -1,0 +1,218 @@
+# GA4 handles for a website team (annotations and one AI assistant channel group). A separate
+# template, so the read template google-analytics keeps its surface and a whole-integration grant
+# adds no write. Stufe 1 — gebaut und live abgenommen. No Google identity in JanuaPort.
+# Configure as corp integration. Internal target_address approval required.
+# The write tools carry tool-exact permissions; a connector-wide scope grants the reads only.
+# Audit depth MUST be metadaten for SSO and token callers before activation.
+# All declared parameters are redacted; higher audit depth stores declared input.
+# Credential google-reporting is the same in all Google reporting templates;
+# its value equals the runtime-key of the plugin place plugin-google-reporting.
+# Annotations and channel groups exist only in the Admin API v1alpha. The service applies the daily
+# cap (20 write attempts per source) and logs one change line per applied write; see
+# google-reporting/README.md in januaport-plugins.
+# Official contracts: developers.google.com/analytics/devguides/config/admin/v1/rest/v1alpha/properties.reportingDataAnnotations
+# developers.google.com/analytics/devguides/config/admin/v1/rest/v1alpha/properties.channelGroups
+name: google-analytics-manage
+version: "1.0.0"
+description: >
+  GA4 handles for an operator approved property: annotations that date a change on the website
+  and one channel group for AI assistant sources. The property comes from the operator
+  configuration, not from a parameter. Deleting or archiving is not part of this template.
+  Annotations and channel groups exist only in the Admin API v1alpha, whose shape can change.
+base_url: http://google-reporting:8092
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  credential: google-reporting
+timeout: 25s
+min_interval: 500ms
+redact_params: [date, title, description, color, annotation_id, source_hosts, channel_group_id, dry_run]
+tools:
+  - name: list_annotations
+    description: >
+      Lists the annotations of the configured GA4 property (the first 200; quality.truncated
+      shows when there are more): id, date or date range, title, description, color,
+      system_generated and managed (the title starts with [JP] and Google did not generate it).
+      Admin API v1alpha. Read-only.
+    check: true
+    request:
+      method: GET
+      path: /v1/ga4/list_annotations
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, items: items, quality: quality, fetched_at: fetched_at}"
+  - name: create_annotation
+    description: >
+      Creates one annotation on the configured GA4 property. The annotation covers one day.
+      The service prefixes the title with [JP] and checks title and description for email
+      addresses, phone numbers and IBANs (personal_data_rejected). It dates a copy or
+      structure change: date, URL, ticket, commit. Admin API v1alpha: the shape can change,
+      and the service stops with unexpected_source_shape instead of writing blindly. The answer
+      carries target (the new annotation id), before (null) and after, with state applied or
+      preview. With dry_run true nothing is written. The service allows 20 write attempts per
+      day and source; failed attempts count, previews are not counted.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "google-analytics-manage:create_annotation".
+    write: true
+    params:
+      - name: date
+        type: string
+        required: true
+        description: One day as ISO date YYYY-MM-DD, from 2020-01-01 up to one year ahead. No range.
+      - name: title
+        type: string
+        required: true
+        description: >
+          Text of at most 55 characters. The service adds the prefix [JP] (60 characters in
+          total, the Google limit). No line breaks.
+      - name: description
+        type: string
+        description: Optional text of at most 150 characters. No line breaks.
+      - name: color
+        type: string
+        enum: [PURPLE, BROWN, BLUE, GREEN, RED, CYAN]
+        description: Optional display color. Default BLUE.
+      - name: dry_run
+        type: boolean
+        description: Optional. true returns the preview (before and after) without writing. Default false.
+    request:
+      method: POST
+      path: /v1/ga4/create_annotation
+      encoding: json
+      body_json:
+        date: "{date}"
+        title: "{title}"
+        description: "{description}"
+        color: "{color}"
+        dry_run: "{dry_run}"
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
+  - name: update_annotation
+    description: >
+      Changes fields of one annotation by its id. The service changes only annotations whose
+      title starts with [JP] and that Google did not generate; any other annotation answers
+      annotation_not_managed and stays as it is. At least one field besides annotation_id is
+      needed. A change without a difference answers state unchanged and writes nothing. The
+      same text checks as for create_annotation apply. Admin API v1alpha: the shape can
+      change, and the service stops with unexpected_source_shape instead of writing blindly.
+      The answer carries before and after, with state applied, preview or unchanged. With
+      dry_run true nothing is written. The service allows 20 write attempts per day and
+      source; failed attempts count, previews are not counted.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "google-analytics-manage:update_annotation".
+    write: true
+    params:
+      - name: annotation_id
+        type: string
+        required: true
+        description: The id from list_annotations or create_annotation (letters, digits, - and _).
+      - name: date
+        type: string
+        description: Optional new day as ISO date YYYY-MM-DD. No range.
+      - name: title
+        type: string
+        description: Optional new text of at most 55 characters. The service adds the prefix [JP].
+      - name: description
+        type: string
+        description: Optional new text of at most 150 characters.
+      - name: color
+        type: string
+        enum: [PURPLE, BROWN, BLUE, GREEN, RED, CYAN]
+        description: Optional new display color.
+      - name: dry_run
+        type: boolean
+        description: Optional. true returns the preview (before and after) without writing. Default false.
+    request:
+      method: POST
+      path: /v1/ga4/update_annotation
+      encoding: json
+      body_json:
+        annotation_id: "{annotation_id}"
+        date: "{date}"
+        title: "{title}"
+        description: "{description}"
+        color: "{color}"
+        dry_run: "{dry_run}"
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
+  - name: list_channel_groups
+    description: >
+      Lists the channel groups of the configured GA4 property: id, name, primary, system_defined,
+      managed (the display name equals the configured name), source_hosts of the AI channel and
+      the channel names. Admin API v1alpha. Read-only.
+    request:
+      method: GET
+      path: /v1/ga4/list_channel_groups
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, items: items, quality: quality, fetched_at: fetched_at}"
+  - name: create_channel_group
+    description: >
+      Creates the channel group with the configured name (default KI-Assistenten). Its first
+      channel collects sessions whose source is one of the given hostnames; the 19 Google default
+      channels follow, so every other session keeps its usual channel and the AI channel stands
+      before Referral. A custom group classifies every session, which is why the default
+      channels are part of it. The group is created with primary false: reports keep the default
+      channel group until a person sets it primary in Analytics. Google allows 2 custom groups
+      per standard property. A group with the configured name already present answers
+      channel_group_exists. Admin API v1alpha: the shape can change, and the service stops with
+      unexpected_source_shape instead of writing blindly. The answer carries target (the new
+      group id), before (null) and after, with state applied or preview. With dry_run true
+      nothing is written. The service allows 20 write attempts per day and source; failed
+      attempts count, previews are not counted.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "google-analytics-manage:create_channel_group".
+    write: true
+    params:
+      - name: source_hosts
+        type: string
+        required: true
+        description: >
+          Comma-separated lowercase hostnames of AI assistant sources, 1 to 20, for example
+          chatgpt.com,claude.ai,perplexity.ai. No URL, path or pattern.
+      - name: dry_run
+        type: boolean
+        description: Optional. true returns the preview (before and after) without writing. Default false.
+    request:
+      method: POST
+      path: /v1/ga4/create_channel_group
+      encoding: json
+      body_json:
+        source_hosts: "{source_hosts}"
+        dry_run: "{dry_run}"
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
+  - name: update_channel_group
+    description: >
+      Replaces the rules of one channel group by its id, with the given AI source hostnames and
+      the 19 Google default channels. The service changes only a group whose display name equals
+      the configured name and that is not system defined; any other group answers
+      channel_group_not_managed and stays as it is. The patch carries only the grouping rules;
+      name and primary flag stay as they are. Rules that already match answer state unchanged
+      and write nothing. Admin API v1alpha: the shape can change, and the service stops with
+      unexpected_source_shape instead of writing blindly. The answer carries before and after,
+      with state applied, preview or unchanged. With dry_run true nothing is written. The service
+      allows 20 write attempts per day and source; failed attempts count, previews are not counted.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "google-analytics-manage:update_channel_group".
+    write: true
+    params:
+      - name: channel_group_id
+        type: string
+        required: true
+        description: The id from list_channel_groups or create_channel_group (letters, digits, - and _).
+      - name: source_hosts
+        type: string
+        required: true
+        description: >
+          Comma-separated lowercase hostnames of AI assistant sources, 1 to 20, for example
+          chatgpt.com,claude.ai,perplexity.ai. No URL, path or pattern.
+      - name: dry_run
+        type: boolean
+        description: Optional. true returns the preview (before and after) without writing. Default false.
+    request:
+      method: POST
+      path: /v1/ga4/update_channel_group
+      encoding: json
+      body_json:
+        channel_group_id: "{channel_group_id}"
+        source_hosts: "{source_hosts}"
+        dry_run: "{dry_run}"
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
