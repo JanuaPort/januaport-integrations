@@ -77,6 +77,9 @@ name: lexware-office
 # (surface.go: DimParamRequired; belegt in lexware_rechnung_spec_test.go).
 # Dazu die Beschreibung: eine teilweise gesetzte Position lehnt JanuaPort jetzt
 # vor dem Senden ab (Listen-Objekt fail-closed, runtime/json.go).
+# Live-Stand: upload_voucher_file im Produktiveinsatz (Jahresabschluss über
+# ChatGPT, 23.10.2026), create_contact und create_invoice live belegt (15.10.);
+# attach_file_to_voucher noch ohne Live-Beleg.
 version: "3.0.0"
 description: >
   Lexware Office accounting: read vouchers, invoices and contacts, attach
