@@ -1,0 +1,46 @@
+# GEO-Stichprobe: öffentliche Suchfragen an die Google-Gemini-Websuche (Stufe 1 „Sicher verbinden“).
+# Gebaut; Live-Beleg ausstehend. Trend-Signal für Sichtbarkeit, kein Abbild von Google AI Overviews.
+# Vault-Credential: gemini-geo (API-Schlüssel, nur über auth in den Header eingesetzt).
+# Kostenpflichtige Modell-/Websuche: Anbieterdeckel setzt der Betreiber bei Google;
+# Das aufrufende Skript begrenzt die Aufrufe je Lauf (13); daily_cap gilt nur für Schreibwerkzeuge.
+# Frage bleibt im Audit sichtbar: feste öffentliche GEO-Fragen, keine PII-Redaktion nötig.
+# Quellen-URLs sind Google-Umleitungslinks (vertexaisearch…); title trägt die Quelldomain.
+# Doku: https://aistudio.google.com/api-reference/generate-content
+# Prüfdatum der dokumentnahen Request-/Antwortform: 02.11.2026; Modell-ID live prüfen.
+
+name: gemini-websuche
+version: "1.0.0"
+description: >
+  Google Gemini web search for public GEO visibility samples, using the fixed
+  gemini-3.5-flash-lite model. Returns answer text and sources as a visibility
+  trend signal; Google AI Overviews has its own models and search behavior.
+base_url: https://generativelanguage.googleapis.com
+auth:
+  header: x-goog-api-key
+  template: "{{credential}}"
+  credential: gemini-geo
+timeout: 90s
+
+tools:
+  - name: ask
+    description: >
+      Sends a natural-language search question to Google Gemini web search using
+      the fixed gemini-3.5-flash-lite model. Returns answer text and sources
+      (Google redirect URLs and source domains as titles). Results are a trend
+      signal for visibility; Google AI Overviews has its own models and search
+      behavior. Read-only.
+    params:
+      - name: frage
+        description: A search question in natural language.
+        type: string
+        required: true
+    request:
+      method: POST
+      path: /v1beta/models/gemini-3.5-flash-lite:generateContent
+      encoding: json
+      read_via_post: true
+      body_json:
+        contents: [{parts: [{text: "Frage: {frage}"}]}]
+        tools: [{google_search: {}}]
+    response: >-
+      {text: join(`"\n"`, candidates[0].content.parts[].text || `[]`), quellen: candidates[0].groundingMetadata.groundingChunks[].web.{url: uri, title: title}}
