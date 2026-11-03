@@ -1,0 +1,166 @@
+# LinkedIn company-page actions from the operator's editorial plan, after human hash approval.
+# Separate from linkedin-seite: read grants retain their read-only surface with one Bridge key.
+# Stufe 1 — gebaut, noch nicht live abgenommen. No LinkedIn identity in JanuaPort.
+# Configure as corp integration. Internal target_address approval required.
+# Each write tool needs its tool-exact permission; a connector-wide grant adds no write.
+# Audit depth MUST be metadaten for SSO and token callers before activation.
+# All declared parameters are redacted; higher audit depth stores declared input.
+# Credential linkedin-seite is shared with the read template. Its value equals the
+# Bridge runtime-key of the place plugin-linkedin-seite; OAuth stays in the service.
+# The service executes entries from redaktionsplan only after a human approved the matching
+# hash in redaktion_freigabe. It counts 5 write actions and 45 LinkedIn HTTP attempts per UTC day.
+# Contract and setup: linkedin-seite/README.md in januaport-plugins (service 0.2.0).
+# Official LinkedIn contracts, version 202610:
+# https://learn.microsoft.com/linkedin/marketing/community-management/shares/posts-api?view=li-lms-2026-10
+# https://learn.microsoft.com/linkedin/marketing/community-management/shares/comments-api?view=li-lms-2026-10
+name: linkedin-seite-manage
+version: "1.0.0"
+description: >
+  LinkedIn company-page editorial actions through the operator configured linkedin-seite service.
+  Preview an entry from redaktionsplan, then publish, edit or delete its post or create a comment.
+  Text, media, polls and target URNs come from the entry. Human approval of the matching hash in
+  redaktion_freigabe is the service's execution condition. The separate linkedin-seite template
+  provides statistics. This template belongs to a corp integration and the editorial token.
+base_url: http://linkedin-seite:8092
+
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  credential: linkedin-seite
+
+timeout: 25s
+min_interval: 500ms
+redact_params: [eintrag_id, aktion]
+
+tools:
+  - name: vorschau
+    description: >
+      Shows the entry's approval content for one action: post or comment text, format, poll,
+      target post_urn, document title and media with filename, kind, byte size and sha256.
+      hash identifies the exact content and media bytes; freigegeben states whether a human
+      approved that hash for this entry and action in redaktion_freigabe. The preview reads
+      redaktionsplan, approval records and media through the gateway, without a LinkedIn call
+      or a request body. The service allows 10 previews per minute, one at a time.
+    params:
+      - name: eintrag_id
+        type: string
+        required: true
+        description: Entry ID in redaktionsplan, exactly 16 lowercase hexadecimal characters (0-9, a-f).
+      - name: aktion
+        type: string
+        required: true
+        enum: [posten, bearbeiten, loeschen, kommentar]
+        description: Editorial action whose content and hash the preview shows.
+    request:
+      method: GET
+      path: /v1/linkedin-post/vorschau
+      query:
+        - name: eintrag_id
+          value: "{eintrag_id}"
+        - name: aktion
+          value: "{aktion}"
+    response: "{eintrag_id: eintrag_id, aktion: aktion, format: format, hash: hash, freigegeben: freigegeben, post_text: post_text, post_urn: post_urn, kommentar_text: kommentar_text, umfrage: umfrage.{frage: frage, antworten: antworten, dauer: dauer}, dokument_titel: dokument_titel, medien: medien[].{datei: datei, art: art, bytes: bytes, sha256: sha256}, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
+  - name: create_post
+    description: >
+      Publishes the entry as a company-page post: text, image, multiple images, document, video or poll.
+      Only eintrag_id is sent; text, media, poll and target URN come from redaktionsplan.
+      The service executes the action only when a human approved the matching hash for this
+      entry and action (posten) in redaktion_freigabe. vorschau shows the approval content
+      and hash without calling LinkedIn. The service counts 5 write actions and 45 LinkedIn HTTP
+      attempts per UTC day across the write routes. A long job answers HTTP 202 with state
+      in_arbeit after 20 seconds; the same call later returns its state or result. Completed
+      results are retained in the running service process; wiederholt marks a repeated result.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "linkedin-seite-manage:create_post".
+    write: true
+    params:
+      - name: eintrag_id
+        type: string
+        required: true
+        description: Entry ID in redaktionsplan, exactly 16 lowercase hexadecimal characters (0-9, a-f).
+    request:
+      method: POST
+      path: /v1/linkedin-post/create_post
+      encoding: json
+      body_json:
+        eintrag_id: "{eintrag_id}"
+    response: "{aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, video_urn: video_urn, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
+  - name: edit_post
+    description: >
+      Updates the text of the entry's existing company-page post.
+      Only eintrag_id is sent; text, media, poll and target URN come from redaktionsplan.
+      The service executes the action only when a human approved the matching hash for this
+      entry and action (bearbeiten) in redaktion_freigabe. vorschau shows the approval content
+      and hash without calling LinkedIn. The service counts 5 write actions and 45 LinkedIn HTTP
+      attempts per UTC day across the write routes. A long job answers HTTP 202 with state
+      in_arbeit after 20 seconds; the same call later returns its state or result. Completed
+      results are retained in the running service process; wiederholt marks a repeated result.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "linkedin-seite-manage:edit_post".
+    write: true
+    params:
+      - name: eintrag_id
+        type: string
+        required: true
+        description: Entry ID in redaktionsplan, exactly 16 lowercase hexadecimal characters (0-9, a-f).
+    request:
+      method: POST
+      path: /v1/linkedin-post/edit_post
+      encoding: json
+      body_json:
+        eintrag_id: "{eintrag_id}"
+    response: "{aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
+  - name: delete_post
+    description: >
+      Deletes the company-page post identified by the entry's post_urn.
+      Only eintrag_id is sent; text, media, poll and target URN come from redaktionsplan.
+      The service executes the action only when a human approved the matching hash for this
+      entry and action (loeschen) in redaktion_freigabe. vorschau shows the approval content
+      and hash without calling LinkedIn. The service counts 5 write actions and 45 LinkedIn HTTP
+      attempts per UTC day across the write routes. A long job answers HTTP 202 with state
+      in_arbeit after 20 seconds; the same call later returns its state or result. Completed
+      results are retained in the running service process; wiederholt marks a repeated result.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "linkedin-seite-manage:delete_post".
+    write: true
+    params:
+      - name: eintrag_id
+        type: string
+        required: true
+        description: Entry ID in redaktionsplan, exactly 16 lowercase hexadecimal characters (0-9, a-f).
+    request:
+      method: POST
+      path: /v1/linkedin-post/delete_post
+      encoding: json
+      body_json:
+        eintrag_id: "{eintrag_id}"
+    response: "{aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
+  - name: create_comment
+    description: >
+      Creates a company-page comment from kommentar_text on the post identified by the entry's post_urn.
+      Only eintrag_id is sent; text, media, poll and target URN come from redaktionsplan.
+      The service executes the action only when a human approved the matching hash for this
+      entry and action (kommentar) in redaktion_freigabe. vorschau shows the approval content
+      and hash without calling LinkedIn. The service counts 5 write actions and 45 LinkedIn HTTP
+      attempts per UTC day across the write routes. A long job answers HTTP 202 with state
+      in_arbeit after 20 seconds; the same call later returns its state or result. Completed
+      results are retained in the running service process; wiederholt marks a repeated result.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "linkedin-seite-manage:create_comment".
+    write: true
+    params:
+      - name: eintrag_id
+        type: string
+        required: true
+        description: Entry ID in redaktionsplan, exactly 16 lowercase hexadecimal characters (0-9, a-f).
+    request:
+      method: POST
+      path: /v1/linkedin-post/create_comment
+      encoding: json
+      body_json:
+        eintrag_id: "{eintrag_id}"
+    response: "{aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, kommentar_id: kommentar_id, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"

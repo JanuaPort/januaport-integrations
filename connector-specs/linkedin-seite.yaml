@@ -1,0 +1,99 @@
+# Fixed read-only reports from the operator's linkedin-seite service.
+# Stufe 1 — gebaut, noch nicht live abgenommen. No LinkedIn identity in JanuaPort.
+# Configure as corp integration. Internal target_address approval required.
+# Audit depth MUST be metadaten for SSO and token callers before activation.
+# All declared parameters are redacted; higher audit depth stores declared input.
+# Totals and time-series sums only. The response projection is a positive list of the
+# fields the service delivers today; breakdowns by function, seniority, industry, region,
+# company or company size are neither requested nor passed on, even if a response carries them.
+# Credential linkedin-seite holds the same value as the runtime-key of the plugin place
+# plugin-linkedin-seite (the Bridge key; the OAuth JSON stays in plugin-linkedin-seite-oauth).
+# No write tools: posting lives in the separate linkedin-seite-manage template.
+# Official contract: learn.microsoft.com/linkedin/marketing/community-management (version 202610)
+name: linkedin-seite
+version: "1.0.0"
+description: >
+  Fixed LinkedIn reports for one operator configured company page. Read-only: page totals,
+  follower total and gains, and the latest published posts with lifetime totals. Sums only,
+  no breakdown by member attributes, no member lists, no comment or reaction contents.
+base_url: http://linkedin-seite:8092
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  credential: linkedin-seite
+timeout: 25s
+min_interval: 500ms
+redact_params: [period_days, end_date, limit]
+tools:
+  - name: page_statistics
+    description: >
+      Totals of the configured company page over one period: impressions, clicks and page views as sums.
+      Days are UTC and completed; default is the last 7 days (period_days 1 to 90). end_date is inclusive
+      and at most yesterday (UTC). Impressions and clicks are the share totals of the page's posts, page
+      views come from the page statistics. Totals only, no breakdown by function, seniority, industry,
+      region or company size. The result names the covered period as zeitraum (start, ende_exklusiv).
+      For follower numbers use followers, for single posts use posts. When the service token nears expiry
+      the result also carries warnung and ablaufdatum.
+    params:
+      - name: period_days
+        type: integer
+        description: Optional period in completed days, 1 through 90. Default 7.
+      - name: end_date
+        type: string
+        description: Optional last day of the period, ISO date YYYY-MM-DD (UTC), at most yesterday. Default yesterday.
+    request:
+      method: GET
+      path: /v1/linkedin/page_statistics
+      query:
+        - name: period_days
+          value: "{period_days}"
+        - name: end_date
+          value: "{end_date}"
+    response: "{bericht: bericht, summen: summen.{impressionen: impressionen, klicks: klicks, seitenaufrufe: seitenaufrufe}, zeitraum: zeitraum.{start: start, ende_exklusiv: ende_exklusiv}, warnung: warnung, ablaufdatum: ablaufdatum}"
+  - name: followers
+    description: >
+      Follower total of the configured company page plus the follower gains over one period. gesamt is the
+      current total at call time and does not depend on the period. zuwachs counts new followers (organic plus
+      paid) in the period; it is not the net change, unfollows are not subtracted. Follower data is available up
+      to today minus two days (UTC): end_date is inclusive and at most today minus two days, default period is
+      the last 7 days ending on that day (period_days 1 to 90). No breakdown by function, seniority, industry,
+      region or company size. The result names the covered period as zeitraum (start, ende_exklusiv).
+      For impressions, clicks and page views use page_statistics. When the service token nears expiry the result
+      also carries warnung and ablaufdatum.
+    params:
+      - name: period_days
+        type: integer
+        description: Optional period in days, 1 through 90. Default 7.
+      - name: end_date
+        type: string
+        description: Optional last day of the period, ISO date YYYY-MM-DD (UTC), at most today minus two days. Default is that day.
+    request:
+      method: GET
+      path: /v1/linkedin/followers
+      query:
+        - name: period_days
+          value: "{period_days}"
+        - name: end_date
+          value: "{end_date}"
+    response: "{bericht: bericht, summen: summen.{gesamt: gesamt, zuwachs: zuwachs}, zeitraum: zeitraum.{start: start, ende_exklusiv: ende_exklusiv}, warnung: warnung, ablaufdatum: ablaufdatum}"
+  - name: posts
+    description: >
+      The most recent published posts of the configured company page, newest first by creation date (limit 1 to 10,
+      default 10). Per post: datum (UTC date), id, textanfang (the first 120 characters of the page's own post text),
+      and lifetime totals impressionen, klicks, reaktionen, kommentare and shares since publication; the totals are
+      not limited to a period, for period totals use page_statistics. reaktionen is the like count. korrigiert true
+      means the reaction sum was negative at the source and is shown as 0. ohne_interaktion true means the source has
+      no statistics for the post yet and all counts are 0. A post that mentions a person has textanfang null and
+      text_ausgelassen erwaehnung. No comment texts, no reaction lists, no mentioned people. One call to this
+      tool uses up to 11 of the service's 50 daily LinkedIn requests.
+    params:
+      - name: limit
+        type: integer
+        description: Optional number of posts, 1 through 10. Default 10.
+    request:
+      method: GET
+      path: /v1/linkedin/posts
+      query:
+        - name: limit
+          value: "{limit}"
+    response: "{bericht: bericht, beitraege: beitraege[].{datum: datum, id: id, textanfang: textanfang, text_ausgelassen: text_ausgelassen, impressionen: impressionen, klicks: klicks, reaktionen: reaktionen, kommentare: kommentare, shares: shares, korrigiert: korrigiert || `false`, ohne_interaktion: ohne_interaktion || `false`}, warnung: warnung, ablaufdatum: ablaufdatum}"
