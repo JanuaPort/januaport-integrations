@@ -1,5 +1,5 @@
 # GEO-Stichprobe: öffentliche Suchfragen an die OpenAI-Websuche (Stufe 1 „Sicher verbinden“).
-# Gebaut; Live-Beleg ausstehend. Trend-Signal für Sichtbarkeit, kein Abbild der ChatGPT-App.
+# Live belegt 03.11.2026 (13 feste Fragen, alle ok). Trend-Signal für Sichtbarkeit, kein Abbild der ChatGPT-App.
 # Vault-Credential: openai-geo (API-Schlüssel, nur über auth in den Header eingesetzt).
 # Kostenpflichtige Modell-/Websuche: Anbieterdeckel setzt der Betreiber bei OpenAI;
 # Das aufrufende Skript begrenzt die Aufrufe je Lauf (13); daily_cap gilt nur für Schreibwerkzeuge.
