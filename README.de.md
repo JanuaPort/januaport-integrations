@@ -35,7 +35,7 @@ kann sie von außen beigetragen und geprüft werden, ohne dass jemand das Gatewa
 
 | Ordner | Inhalt |
 |---|---|
-| [`connector-specs/`](connector-specs/) | Die ausgelieferten REST-Specs — 17 Stück, Tabelle unten. |
+| [`connector-specs/`](connector-specs/) | Die ausgelieferten REST-Specs — 23 Stück, Tabelle unten. |
 | [`upstream-specs/`](upstream-specs/) | Beispiel-Konfiguration für einen **MCP-Upstream** (fremder MCP-Server unter unserer Governance): `github.yaml`. |
 | [`docs/`](docs/) | Die vier Format-Verträge, die Bau-Disziplin und drei Betreiber-Anleitungen. |
 | [`examples/`](examples/) | Beilagen zu den Anleitungen (heute: das Exchange-Skript zur Ein-Postfach-Grenze). |

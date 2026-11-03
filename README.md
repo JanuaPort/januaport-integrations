@@ -35,7 +35,7 @@ reviewed from outside without anyone touching the gateway.
 
 | Folder | Contents |
 |---|---|
-| [`connector-specs/`](connector-specs/) | The shipped REST specs, seventeen of them, see the table below. |
+| [`connector-specs/`](connector-specs/) | The shipped REST specs, twenty-three of them, see the table below. |
 | [`upstream-specs/`](upstream-specs/) | Example configuration for an **MCP upstream** (a third-party MCP server under our governance): `github.yaml`. |
 | [`docs/`](docs/) | The four format contracts, the build discipline and three operator guides. |
 | [`examples/`](examples/) | Attachments to the guides (today: the Exchange script for the single-mailbox limit). |
