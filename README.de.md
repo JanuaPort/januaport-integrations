@@ -35,7 +35,7 @@ kann sie von außen beigetragen und geprüft werden, ohne dass jemand das Gatewa
 
 | Ordner | Inhalt |
 |---|---|
-| [`connector-specs/`](connector-specs/) | Die ausgelieferten REST-Specs — 17 Stück, Tabelle unten. |
+| [`connector-specs/`](connector-specs/) | Die ausgelieferten REST-Specs — 23 Stück, Tabelle unten. |
 | [`upstream-specs/`](upstream-specs/) | Beispiel-Konfiguration für einen **MCP-Upstream** (fremder MCP-Server unter unserer Governance): `github.yaml`. |
 | [`docs/`](docs/) | Die vier Format-Verträge, die Bau-Disziplin und drei Betreiber-Anleitungen. |
 | [`examples/`](examples/) | Beilagen zu den Anleitungen (heute: das Exchange-Skript zur Ein-Postfach-Grenze). |
@@ -103,6 +103,7 @@ gelaufen, im Backlog dokumentiert.
 
 | Spec | Werkzeuge | Stand |
 |---|---|---|
+| [`gemini-websuche.yaml`](connector-specs/gemini-websuche.yaml) (1.0.0) | 1, lesend | Gebaut; Live-Beleg ausstehend. Je Aufruf eine feste öffentliche Frage an die Gemini-API mit Google-Suche; Antworttext und Quelldomains. Trend-Signal für die Sichtbarkeit in KI-Antworten, kein Abbild von Google AI Overviews. Kostenpflichtige API; den Anbieterdeckel setzt der Betreiber. |
 | [`google-search-console.yaml`](connector-specs/google-search-console.yaml) (1.0.0) | 4, lesend | Gebaut, synthetisch geprüft; Live-Abnahme offen. Privater Beisteller, feste öffentliche Seitenliste. Query-Freitext standardmäßig gesperrt (Betreiberschalter); Auditmetadaten nötig. |
 | [`google-analytics.yaml`](connector-specs/google-analytics.yaml) (1.0.0) | 4, lesend | Gebaut, synthetisch geprüft; Live-Abnahme offen. Feste GA4-Aggregate, Host-/Seitenfilter, optionaler Key-Event-Messvertrag. |
 | [`google-search-console-manage.yaml`](connector-specs/google-search-console-manage.yaml) (1.0.0) | 4, davon 1 schreibend | Gebaut; live belegt (22.10.2026). Sitemaps auflisten, lesen und einreichen, URL-Inspektion. Kein Löschen; Einreichen löst kein Crawling aus. Tagesdeckel und Änderungszeile im Beisteller. |
@@ -119,6 +120,7 @@ gelaufen, im Backlog dokumentiert.
 | [`jtl-wawi.yaml`](connector-specs/jtl-wawi.yaml) (1.0.0) | 10, lesend | Gebaut; Live-Beleg ausstehend. On-Prem-API-Version 2.0; feste Request-Header, kein Schreiben. |
 | [`microsoft-graph-calendar.yaml`](connector-specs/microsoft-graph-calendar.yaml) (1.0.0) | 3, lesend | Gebaut; Live-Beleg ausstehend. Ein Postfach; keine Teilnehmer und kein Termintext. |
 | [`odoo.yaml`](connector-specs/odoo.yaml) (3.1.0) | 15, davon 4 schreibend | Gebaut. Werkzeuge der früheren 3.0.0 live belegt (30.09.2026); Datenbank-Instanzwert der 3.1.0 noch nicht live belegt. Chatter benötigt eine eigene Integration mit internem Odoo-Nutzer. Das Vertragsmodell ist eine Erweiterung, kein Odoo-Standard. |
+| [`openai-websuche.yaml`](connector-specs/openai-websuche.yaml) (1.0.0) | 1, lesend | Gebaut; Live-Beleg ausstehend. Je Aufruf eine feste öffentliche Frage an die OpenAI-Responses-API mit Websuche; Antworttext und zitierte URLs. Trend-Signal für die Sichtbarkeit in KI-Antworten, kein Abbild der ChatGPT-App. Kostenpflichtige API; den Anbieterdeckel setzt der Betreiber. |
 | [`openproject.yaml`](connector-specs/openproject.yaml) (1.0.0) | 7, lesend | Gebaut; live belegt gegen 17.8.0 (30.09.2026). Projekte und Arbeitspakete; keine Zeitbuchungen und keine Nutzerlisten. |
 | [`paperless.yaml`](connector-specs/paperless.yaml) (1.0.0) | 6, lesend | Gebaut; live belegt gegen 3.2.1 (30.09.2026). Nur Metadaten; kein OCR-Text, Datei-Inhalt oder Download. |
 | [`shopware-admin.yaml`](connector-specs/shopware-admin.yaml) (1.0.0) | 6, lesend | Gebaut; live belegt gegen 6.7.14.2 (29.09.2026). ACL-Rolle nur lesend; JSON-Antwortformat und geerbte Variantennamen. |

@@ -1,0 +1,46 @@
+# GEO-Stichprobe: öffentliche Suchfragen an die OpenAI-Websuche (Stufe 1 „Sicher verbinden“).
+# Gebaut; Live-Beleg ausstehend. Trend-Signal für Sichtbarkeit, kein Abbild der ChatGPT-App.
+# Vault-Credential: openai-geo (API-Schlüssel, nur über auth in den Header eingesetzt).
+# Kostenpflichtige Modell-/Websuche: Anbieterdeckel setzt der Betreiber bei OpenAI;
+# Das aufrufende Skript begrenzt die Aufrufe je Lauf (13); daily_cap gilt nur für Schreibwerkzeuge.
+# Frage bleibt im Audit sichtbar: feste öffentliche GEO-Fragen, keine PII-Redaktion nötig.
+# Doku: https://developers.openai.com/api/docs/guides/tools-web-search
+#       https://developers.openai.com/api/reference/resources/responses/methods/create
+# Prüfdatum der dokumentnahen Request-/Antwortform: 02.11.2026; Modell-ID live prüfen.
+
+name: openai-websuche
+version: "1.0.0"
+description: >
+  OpenAI web search for public GEO visibility samples, using the fixed
+  gpt-5-mini model. Returns answer text and sources as a visibility trend signal;
+  the ChatGPT consumer app has its own models and search behavior.
+base_url: https://api.openai.com
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  credential: openai-geo
+timeout: 90s
+
+tools:
+  - name: ask
+    description: >
+      Sends a natural-language search question to OpenAI web search using the
+      fixed gpt-5-mini model. Returns answer text and sources (URLs and titles).
+      Results are a trend signal for visibility; the ChatGPT consumer app has
+      its own models and search behavior. Read-only.
+    params:
+      - name: frage
+        description: A search question in natural language.
+        type: string
+        required: true
+    request:
+      method: POST
+      path: /v1/responses
+      encoding: json
+      read_via_post: true
+      body_json:
+        model: gpt-5-mini
+        tools: [{type: web_search}]
+        input: "Frage: {frage}"
+    response: >-
+      {text: join(`"\n"`, (output[?type=='message'].content[] | [?type=='output_text'].text) || `[]`), quellen: (output[?type=='message'].content[] | [?type=='output_text'].annotations[] | [?type=='url_citation'].{url: url, title: title})}
