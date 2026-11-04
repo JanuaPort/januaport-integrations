@@ -40,7 +40,8 @@
 # scope (e.g. lexware-office:create_invoice); a connector-wide scope does NOT
 # grant them (deny-by-default for writes, see docs/connector-spec.md).
 # redact_params keeps customer data out of the audit (names, address, email,
-# VAT id, free texts); amounts, quantities, tax rates and dates stay visible.
+# VAT id, free texts, file names, search filters); amounts, quantities, tax
+# rates and dates stay visible. This holds at the default log depth "Metadaten".
 #
 # WICHTIG — typ-spezifische Detail-Endpunkte: /v1/voucherlist ist ein
 # typ-ÜBERGREIFENDER Index, aber die Detail-Abfrage ist typ-spezifisch. Es gibt
@@ -77,10 +78,12 @@ name: lexware-office
 # (surface.go: DimParamRequired; belegt in lexware_rechnung_spec_test.go).
 # Dazu die Beschreibung: eine teilweise gesetzte Position lehnt JanuaPort jetzt
 # vor dem Senden ab (Listen-Objekt fail-closed, runtime/json.go).
+# 3.0.1: redact_params um name und filename erweitert — mehr Schwärzung
+# ändert die Fläche nicht, deshalb PATCH (surface.go: redactRemovals).
 # Live-Stand: upload_voucher_file im Produktiveinsatz (Jahresabschluss über
 # ChatGPT, 23.10.2026), create_contact und create_invoice live belegt (15.10.);
 # attach_file_to_voucher noch ohne Live-Beleg.
-version: "3.0.0"
+version: "3.0.1"
 description: >
   Lexware Office accounting: read vouchers, invoices and contacts, attach
   receipt files to the inbox or to an existing voucher, and create customer
@@ -97,9 +100,10 @@ auth:
 min_interval: 500ms
 timeout: 30s
 
-# Audit without customer data: names, address, email, VAT id and free
-# texts stay out of the audit log; amounts, quantities, tax rates, dates and the
-# contact id stay visible. `email` also covers the list_contacts search filter.
+# Audit without customer data: names, address, email, VAT id, free texts
+# and file names stay out of the audit log; amounts, quantities, tax rates, dates
+# and the contact id stay visible. `email` and `name` are the list_contacts search
+# filters; `filename` belongs to both upload tools and often names the customer.
 redact_params:
   - company_name
   - vat_id
@@ -115,6 +119,8 @@ redact_params:
   - item1_name
   - item2_name
   - item3_name
+  - name
+  - filename
 
 tools:
   - name: list_vouchers
