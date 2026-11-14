@@ -8,14 +8,17 @@
 # its value equals the runtime-key of the plugin place plugin-google-reporting.
 # Official contracts: developers.google.com/webmaster-tools/v1/searchanalytics/query
 # developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/properties/runReport
+# #1379 part B (2.0.0): period_days 1 through 90; segment is free text checked per site by the
+# service (names from get_status); google-search-console adds page_compare. Instances on 1.1.0 stay
+# on 1.1.0 until an admin upgrades them (MAJOR); the instance value site is kept.
 # #1379: One instance per site. The required instance value site (short name from the service
 # configuration) is sent as header X-Google-Reporting-Site; rights per site are the scopes of the
 # instance. Check get_status after creating an instance: it names the resolved site and its hosts.
 name: google-analytics
-version: "1.1.0"
+version: "2.0.0"
 description: >
   Fixed GA4 reports for an operator approved public website.
-  Read-only, exact public page allowlist, 28 or 90 inclusive source-local days ending at least
+  Read-only, exact public page allowlist, 1 through 90 inclusive source-local days ending at least
   three days ago. No user attribution, free dimensions, property discovery or Odoo export.
   The site comes from the instance value site, not from a parameter.
 base_url: http://google-reporting:8092
@@ -43,7 +46,7 @@ tools:
     request:
       method: GET
       path: /v1/ga4/get_status
-    response: "{schema_version: schema_version, source: source, report: report, state: state, checked_at: checked_at, definition_version: definition_version, site: site, hosts: hosts, report_definitions: report_definitions, key_events: key_events, query_reports: query_reports}"
+    response: "{schema_version: schema_version, source: source, report: report, state: state, checked_at: checked_at, definition_version: definition_version, site: site, hosts: hosts, segments: segments, report_definitions: report_definitions, key_events: key_events, query_reports: query_reports}"
   - name: traffic_summary
     description: >
       Sessions and engaged sessions by fixed default channel group. GA4 property timezone. Consent and attribution differ from GSC; sessions are not clicks. Existing zero is distinct from no rows.
@@ -51,14 +54,13 @@ tools:
     params:
       - name: period_days
         type: integer
-        description: Optional inclusive period, 28 or 90 days. Default 28.
+        description: Optional inclusive period, 1 through 90 days. Default 28.
       - name: end_date
         type: string
         description: Optional ISO date YYYY-MM-DD, at most source today minus three days.
       - name: segment
         type: string
-        enum: [all_public, atas, gateway, shared]
-        description: Optional approved disjoint public page group. Default all_public.
+        description: "Optional segment name of the site or all_public for every approved page. Names follow [a-z][a-z0-9-]{0,31}; get_status lists the names of the site. Default all_public."
       - name: limit
         type: integer
         description: Optional maximum rows, 1 through 100. Default 25. No pagination or export.
@@ -82,14 +84,13 @@ tools:
     params:
       - name: period_days
         type: integer
-        description: Optional inclusive period, 28 or 90 days. Default 28.
+        description: Optional inclusive period, 1 through 90 days. Default 28.
       - name: end_date
         type: string
         description: Optional ISO date YYYY-MM-DD, at most source today minus three days.
       - name: segment
         type: string
-        enum: [all_public, atas, gateway, shared]
-        description: Optional approved disjoint public page group. Default all_public.
+        description: "Optional segment name of the site or all_public for every approved page. Names follow [a-z][a-z0-9-]{0,31}; get_status lists the names of the site. Default all_public."
       - name: limit
         type: integer
         description: Optional maximum rows, 1 through 100. Default 25. No pagination or export.
@@ -113,14 +114,13 @@ tools:
     params:
       - name: period_days
         type: integer
-        description: Optional inclusive period, 28 or 90 days. Default 28.
+        description: Optional inclusive period, 1 through 90 days. Default 28.
       - name: end_date
         type: string
         description: Optional ISO date YYYY-MM-DD, at most source today minus three days.
       - name: segment
         type: string
-        enum: [all_public, atas, gateway, shared]
-        description: Optional approved disjoint public page group. Default all_public.
+        description: "Optional segment name of the site or all_public for every approved page. Names follow [a-z][a-z0-9-]{0,31}; get_status lists the names of the site. Default all_public."
       - name: limit
         type: integer
         description: Optional maximum rows, 1 through 100. Default 25. No pagination or export.

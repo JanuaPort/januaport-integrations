@@ -1,13 +1,13 @@
 # Google Search Console und GA4 über Google Reporting (#1130)
 
-Stufe 1 „Sicher verbinden“: zwei REST-Vorlagen 1.1.0, acht lesende Werkzeuge. Seit 1.1.0 bedient ein Beisteller bis zu fünf Sites: Jede Site hat eine eigene Integrationsinstanz, die den Site-Namen als deklarierten Instanzwert im Header `X-Google-Reporting-Site` sendet. Die Rechte je Site sind die tool-genauen Rechte je Instanz; die Site kommt nie aus einem Werkzeugparameter. Betreiberfolge und Grenzen stehen im README des Beistellers.
+Stufe 1 „Sicher verbinden“: zwei REST-Vorlagen 2.0.0, neun lesende Werkzeuge. Seit 1.1.0 bedient ein Beisteller bis zu fünf Sites: Jede Site hat eine eigene Integrationsinstanz, die den Site-Namen als deklarierten Instanzwert im Header `X-Google-Reporting-Site` sendet. Die Rechte je Site sind die tool-genauen Rechte je Instanz; die Site kommt nie aus einem Werkzeugparameter. Betreiberfolge und Grenzen stehen im README des Beistellers. Seit 2.0.0 gibt es freie Zeiträume, `page_compare` und frei benannte Segmente je Site (Abschnitt „Zeiträume, Vergleich und Segmente“).
 Gebaut und synthetisch geprüft; Live-Abnahme/Release offen. Keine Google-Anmeldung
 im Gateway: der private Beisteller `google-reporting` aus januaport-plugins nutzt
 offizielle Google-Clients, feste Properties, getrennte readonly Scopes,
 freigegebene Hosts/Pfade und feste Berichte.
 
 `google-search-console.yaml`: get_status, performance_overview, query_summary,
-page_summary. `google-analytics.yaml`: get_status, traffic_summary, landing_pages,
+page_summary, page_compare (seit 2.0.0, nur GSC). `google-analytics.yaml`: get_status, traffic_summary, landing_pages,
 key_events. Endgültige MCP-Namen verwenden den Instanznamen als Präfix.
 Beide Vorlagen nennen dieselbe Connector-Credential `google-reporting`: **ein**
 Bridge-Key für beide Quellen, gleich dem `runtime-key` der Stelle
@@ -25,7 +25,7 @@ http://google-reporting:8092.
 1. Vollständiges Runbook im Plugin `google-reporting/README.md` abarbeiten:
    zweckgebundenes Servicekonto/Property-Lesegrants, Servicekonto-JSON nur über die
    Admin-GUI (Basis-Einrichtung) eintragen und die heruntergeladene Datei löschen,
-   Zeitzone,1–50 exakte öffentliche Pfade in disjunkten atas/gateway/shared-Gruppen,
+   Zeitzone,1–50 exakte öffentliche Pfade in 1–8 disjunkten, frei benannten Segmenten je Site,
    explizite kanonische URLs. Keine personenbezogenen Pfade. GA filtert immer
    landingPage UND hostName; feste Kombinationen live prüfen.
 2. Internes jnpt_plugins-Netz erhalten; Dienst nur an dessen reservierte IP binden,
@@ -49,15 +49,34 @@ http://google-reporting:8092.
    benötigen; vorhandener REST-Lifecycle/Reload bleibt. Produkt-/Integrations-
    Vorlage mit gleicher Versionsnummer müssen **bytegleich** sein.
 
+## Zeiträume, Vergleich und Segmente
+
+Beide Lesevorlagen stehen auf **2.0.0** (MAJOR: neues Werkzeug, `segment` ohne feste Auswahl). Die
+Verwaltungsvorlagen bleiben 1.1.0. Bestandsinstanzen werden bei einer MAJOR-Fassung nicht automatisch
+angehoben; sie laufen gegen den neuen Dienst unverändert weiter. Der Admin hebt sie bewusst an
+(`jnpt connector upgrade --yes <instanz>`), der Anlagenwert `site` bleibt erhalten. Vorher den Dienst auf
+2.0.0 bringen, sonst gibt `page_compare` `route_not_found`.
+
+- **Freie Zeiträume:** `period_days` 1–90 für alle Berichte außer `get_status`; `end_date` höchstens
+  Quelle-heute minus drei Tage.
+- **`page_compare`** (nur GSC): Zeitraum A endet bei `end_date`, Zeitraum B ist gleich lang und liegt ohne
+  `compare_end_date` direkt davor, sonst endet er an diesem Tag; B liegt vollständig vor A. Je Seite mit
+  Quellenzeile `clicks`, `impressions`, `ctr`, `position` für A und B und `delta`. CTR und Position kommen
+  aus der Quelle, nie gemittelt. Fehlt eine Zeile, sind Werte und `delta` `null` (unbekannt, nicht 0).
+  Zwei Abfragen, beide zählen gegen die 30 je Quelle und Minute.
+- **Segmente:** 1–8 Namen je Site (`[a-z][a-z0-9-]{0,31}`), `all_public` bleibt fest. Der Dienst prüft
+  `segment` gegen die Segmente der aufgelösten Site; ein unbekanntes oder fremdes Segment ist 400
+  `invalid_input`, nie ein Rückfall auf `all_public`. `get_status` nennt die Segmentnamen.
+
 ## Eingabe-, Daten- und Privacyvertrag
 
-period_days 28 oder 90, Default 28; optionales ISO-end_date inklusiv höchstens
+period_days 1–90 (ganze Zahl ohne führende Null), Default 28; optionales ISO-end_date inklusiv höchstens
 Quelle-heute minus drei Tage. GSC America/Los_Angeles, GA4 Property-Zeitzone.
-segment all_public/atas/gateway/shared, optional exakter GSC-page_path innerhalb
+segment `all_public` oder ein Segmentname der Site, optional exakter GSC-page_path innerhalb
 Segment. Ranglisten-limit 1–100, Default 25, Übersicht höchstens 90 Tage.
 Keine freien Properties/Dimensionen/Metriken/Filter/Offsets oder Autoexport.
-Zahlengrenzen/Datum/Kombinationen prüft der Beisteller vor Token/Google. Gateway
-prüft Enums/einfache Typen; numerische Enums sind im Vorlagenformat nicht verfügbar.
+Zahlengrenzen/Datum/Kombinationen und die Segmentnamen prüft der Beisteller vor Token/Google. Gateway
+prüft einfache Typen; Enums und Zahlenintervalle sind im Vorlagenformat nicht verfügbar.
 Zusätzliche MCP-Argumente ignoriert die bestehende Runtime, schwärzt ihre Werte
 und leitet sie nicht weiter. Unbekannte/doppelte HTTP-Parameter lehnt der Dienst ab.
 
@@ -98,7 +117,8 @@ Digest wird erst im getrennten GATE/VENDOR-Release bereitgestellt.
 
 Offene P3-Gates: Zielhost-Egress/Listenernachweis, minimale Grants und negative
 Liveprobe, GA-Kompatibilität, Consent/Seiten-/Messvertrag, SEC/Auditfreigabe,
-Vergleich mit Quellenoberflächen und je Quelle echter 28/90-Tage-Abruf über
+Vergleich mit Quellenoberflächen und je Quelle echter Abruf (28 und 90 Tage, dazu ein
+`page_compare` mit zwei Wochen) über
 ChatGPT → JanuaPort SSO Neu → Connector → Beisteller → Google.
 
 API: [GSC](https://developers.google.com/webmaster-tools/v1/searchanalytics/query),

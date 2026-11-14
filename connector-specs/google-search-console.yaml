@@ -8,14 +8,17 @@
 # its value equals the runtime-key of the plugin place plugin-google-reporting.
 # Official contracts: developers.google.com/webmaster-tools/v1/searchanalytics/query
 # developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/properties/runReport
+# #1379 part B (2.0.0): period_days 1 through 90; segment is free text checked per site by the
+# service (names from get_status); google-search-console adds page_compare. Instances on 1.1.0 stay
+# on 1.1.0 until an admin upgrades them (MAJOR); the instance value site is kept.
 # #1379: One instance per site. The required instance value site (short name from the service
 # configuration) is sent as header X-Google-Reporting-Site; rights per site are the scopes of the
 # instance. Check get_status after creating an instance: it names the resolved site and its hosts.
 name: google-search-console
-version: "1.1.0"
+version: "2.0.0"
 description: >
   Fixed Search Console reports for an operator approved public website.
-  Read-only, exact public page allowlist, 28 or 90 inclusive source-local days ending at least
+  Read-only, exact public page allowlist, 1 through 90 inclusive source-local days ending at least
   three days ago. No user attribution, free dimensions, property discovery or Odoo export.
   The site comes from the instance value site, not from a parameter.
 base_url: http://google-reporting:8092
@@ -32,7 +35,7 @@ timeout: 25s
 min_interval: 500ms
 headers:
   X-Google-Reporting-Site: "{{instance.site}}"
-redact_params: [period_days, end_date, segment, page_path, limit]
+redact_params: [period_days, end_date, compare_end_date, segment, page_path, limit]
 tools:
   - name: get_status
     description: >
@@ -43,7 +46,7 @@ tools:
     request:
       method: GET
       path: /v1/gsc/get_status
-    response: "{schema_version: schema_version, source: source, report: report, state: state, checked_at: checked_at, definition_version: definition_version, site: site, hosts: hosts, report_definitions: report_definitions, key_events: key_events, query_reports: query_reports}"
+    response: "{schema_version: schema_version, source: source, report: report, state: state, checked_at: checked_at, definition_version: definition_version, site: site, hosts: hosts, segments: segments, report_definitions: report_definitions, key_events: key_events, query_reports: query_reports}"
   - name: performance_overview
     description: >
       Daily clicks, impressions, CTR and position. Source days America/Los_Angeles. Missing days are unknown, not zero. CTR and position must not be averaged across rows.
@@ -51,14 +54,13 @@ tools:
     params:
       - name: period_days
         type: integer
-        description: Optional inclusive period, 28 or 90 days. Default 28.
+        description: Optional inclusive period, 1 through 90 days. Default 28.
       - name: end_date
         type: string
         description: Optional ISO date YYYY-MM-DD, at most source today minus three days.
       - name: segment
         type: string
-        enum: [all_public, atas, gateway, shared]
-        description: Optional approved disjoint public page group. Default all_public.
+        description: "Optional segment name of the site or all_public for every approved page. Names follow [a-z][a-z0-9-]{0,31}; get_status lists the names of the site. Default all_public."
       - name: page_path
         type: string
         description: Optional exact approved public path inside segment. No URL, query or user path.
@@ -82,14 +84,13 @@ tools:
     params:
       - name: period_days
         type: integer
-        description: Optional inclusive period, 28 or 90 days. Default 28.
+        description: Optional inclusive period, 1 through 90 days. Default 28.
       - name: end_date
         type: string
         description: Optional ISO date YYYY-MM-DD, at most source today minus three days.
       - name: segment
         type: string
-        enum: [all_public, atas, gateway, shared]
-        description: Optional approved disjoint public page group. Default all_public.
+        description: "Optional segment name of the site or all_public for every approved page. Names follow [a-z][a-z0-9-]{0,31}; get_status lists the names of the site. Default all_public."
       - name: page_path
         type: string
         description: Optional exact approved public path inside segment. No URL, query or user path.
@@ -122,14 +123,13 @@ tools:
     params:
       - name: period_days
         type: integer
-        description: Optional inclusive period, 28 or 90 days. Default 28.
+        description: Optional inclusive period, 1 through 90 days. Default 28.
       - name: end_date
         type: string
         description: Optional ISO date YYYY-MM-DD, at most source today minus three days.
       - name: segment
         type: string
-        enum: [all_public, atas, gateway, shared]
-        description: Optional approved disjoint public page group. Default all_public.
+        description: "Optional segment name of the site or all_public for every approved page. Names follow [a-z][a-z0-9-]{0,31}; get_status lists the names of the site. Default all_public."
       - name: page_path
         type: string
         description: Optional exact approved public path inside segment. No URL, query or user path.
@@ -151,3 +151,43 @@ tools:
         - name: limit
           value: "{limit}"
     response: "{schema_version: schema_version, source: source, report: report, state: state, range: range, scope: scope, rows: rows, quality: quality, fetched_at: fetched_at, measurement: measurement}"
+  - name: page_compare
+    description: >
+      Per approved public page: clicks, impressions, CTR and position for two periods A and B of the same length, plus the difference A minus B per field. Period A ends at end_date, period B ends directly before period A or at compare_end_date; the periods are without overlap. Periods are 1 through 90 days, and the last day is source today minus three days. A page without a row in one period shows null values and a null difference for it, not zero. CTR and position come from the source row and are not averaged. Top rows are not a complete total.
+      Fixed public segment membership; no account, property, dimension, metric or filter override.
+    params:
+      - name: period_days
+        type: integer
+        description: Optional inclusive period, 1 through 90 days. Default 28.
+      - name: end_date
+        type: string
+        description: Optional ISO date YYYY-MM-DD, last day of period A, at most source today minus three days.
+      - name: compare_end_date
+        type: string
+        description: "Optional ISO date YYYY-MM-DD, last day of period B. Period B has the length of period A and ends before period A starts. At most source today minus three days. Default: the day before period A starts."
+      - name: segment
+        type: string
+        description: "Optional segment name of the site or all_public for every approved page. Names follow [a-z][a-z0-9-]{0,31}; get_status lists the names of the site. Default all_public."
+      - name: page_path
+        type: string
+        description: Optional exact approved public path inside segment. No URL, query or user path.
+      - name: limit
+        type: integer
+        description: Optional maximum rows, 1 through 100. Default 25. No pagination or export.
+    request:
+      method: GET
+      path: /v1/gsc/page_compare
+      query:
+        - name: period_days
+          value: "{period_days}"
+        - name: end_date
+          value: "{end_date}"
+        - name: compare_end_date
+          value: "{compare_end_date}"
+        - name: segment
+          value: "{segment}"
+        - name: page_path
+          value: "{page_path}"
+        - name: limit
+          value: "{limit}"
+    response: "{schema_version: schema_version, source: source, report: report, state: state, range: range, compare_range: compare_range, scope: scope, rows: rows, quality: quality, fetched_at: fetched_at, measurement: measurement}"
