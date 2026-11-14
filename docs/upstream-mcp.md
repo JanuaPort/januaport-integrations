@@ -112,7 +112,7 @@ Standardmäßig ist ein Upstream **read-only**. Schreibende Tools werden über e
 
 ```yaml
 write_tools:
-  - create_issue
+  - issue_write
   - add_issue_comment
 ```
 
@@ -120,7 +120,7 @@ Verhalten schreibender Upstream-Tools (überträgt die
 Write-Semantik (Produkt-Doku, nicht öffentlich) auf den Proxy):
 
 - **Tool-genauer Scope Pflicht.** Ein Write-Tool wird von einem **instanz-weiten**
-  Scope (`github`) **nicht** erfasst — es verlangt `github:create_issue`. „Gib dem
+  Scope (`github`) **nicht** erfasst — es verlangt `github:issue_write`. „Gib dem
   Token GitHub" gibt so nie versehentlich Schreibrechte.
 - **Annotations (serverseitig).** Write-Tools tragen `readOnlyHint:false` (ein
   Client wie Cowork kann vor dem Aufruf bestätigen lassen); `destructiveHint` wird
@@ -189,25 +189,79 @@ auth:
 tools:
   - search_issues
 write_tools:
-  - create_issue
+  - issue_write
   - add_issue_comment
 ```
 
 Ergebnis: getrennte Tool-Namensräume (`github_readonly_search_issues` vs.
-`github_support_create_issue`), getrennte Vault-Credentials, getrennte Scopes.
+`github_support_issue_write`), getrennte Vault-Credentials, getrennte Scopes.
 Ein Token bekommt gezielt, was es braucht:
 
 ```bash
 jnpt credential set --name github-readonly-pat
 jnpt credential set --name github-support-pat
 jnpt token create --allow github-readonly                       # nur Lesen (org-weit)
-jnpt token create --allow github-support:create_issue \
+jnpt token create --allow github-support:issue_write \
                   --allow github-support:add_issue_comment       # nur Support-Writes
 ```
 
 > **Doppelte Sicherheit:** Die eigentliche Berechtigung liegt am **PAT** (was
 > GitHub erlaubt) **und** am **JanuaPort-Scope** (welches Tool der Token aufrufen darf).
 > Beide zusammen begrenzen den Blast-Radius.
+
+## GitHub: Repo-Pflege (#1380)
+
+Ein KI-Team pflegt sein eigenes Repo über eine eigene Instanz mit der Allowlist aus
+`upstream-specs/github.yaml`: Issues anlegen und ändern, kommentieren, Branches
+anlegen, Dateien committen, Pull Requests öffnen. Die Werkzeugnamen sind am
+2026-11-14 live gegen `tools/list` geprüft. GitHub fasst Methoden in Sammelwerkzeugen
+zusammen, und ein Scope gibt immer das ganze Werkzeug frei:
+
+| Werkzeug | Art | Methoden / Wirkung |
+|---|---|---|
+| `list_issues`, `search_issues`, `list_pull_requests`, `get_file_contents` | lesen | Listen und Dateiinhalt |
+| `issue_read` | lesen | `get`, `get_comments`, `get_sub_issues`, `get_parent`, `get_labels` |
+| `pull_request_read` | lesen | `get`, `get_diff`, `get_status`, `get_files`, `get_commits`, `get_review_comments`, `get_reviews`, `get_comments`, `get_check_runs` |
+| `issue_write` | schreiben | `create` und `update`: Titel, Text, Status (`state`, `state_reason`, `duplicate_of`), Labels, Zuständige, Meilenstein, Typ, Eltern-Issue |
+| `add_issue_comment` | schreiben | Kommentar, auch Reaktion |
+| `create_branch` | schreiben | neuer Branch, optional von `from_branch` |
+| `create_or_update_file` | schreiben | eine Datei je Commit auf einem benannten Branch |
+| `create_pull_request` | schreiben | Pull Request öffnen, auch als Entwurf |
+
+Der Merge nach `main` (`merge_pull_request`) ist ein eigenes Werkzeug und nicht Teil
+dieser Stufe. Kein anderes Werkzeug mergt: `update_pull_request` kennt keinen Merge und
+ist ebenfalls nicht freigegeben.
+
+**Einrichtung je Repo:**
+
+1. Fine-grained PAT nur für **dieses eine Repo**: Contents, Issues und Pull requests
+   lesen und schreiben, Metadata lesen. Keine Administration, keine Actions, keine Secrets.
+   Den PAT gibt ein Mensch über `jnpt credential set --name <instanz>-pat` (stdin) oder
+   die Admin-GUI ein.
+2. **Branch-Schutz entscheiden, bevor die Instanz schreibt.** `create_or_update_file`
+   schreibt auf jeden Branch, den der PAT darf, auch auf `main`. Die Regel „`main` nur
+   über Pull Request“ (Ruleset oder Branch Protection, ohne Ausnahme für den PAT-Inhaber,
+   Force-Push und Löschen gesperrt) hält Pflege und Merge getrennt. Den Schutz setzt der
+   Repo-Eigentümer, JanuaPort prüft ihn nicht. Auf privaten Repos bietet GitHub ihn nur
+   mit bezahltem Plan an (sonst 403). Ohne Schutz kann die KI mit `create_or_update_file`
+   direkt auf `main` committen. Das ist dann eine bewusste Entscheidung des Eigentümers,
+   und das Audit von JanuaPort zeigt jeden dieser Aufrufe.
+3. Instanz mit eigenem Namen anlegen (z. B. `github-team`), Spec aus
+   `upstream-specs/github.yaml`, Credential-Name auf den PAT zeigen lassen.
+4. Rechte tool-genau vergeben:
+
+```bash
+jnpt token allow <token-id> github-team                    # alle Lesewerkzeuge
+jnpt token allow <token-id> github-team:issue_write
+jnpt token allow <token-id> github-team:add_issue_comment
+jnpt token allow <token-id> github-team:create_branch
+jnpt token allow <token-id> github-team:create_or_update_file
+jnpt token allow <token-id> github-team:create_pull_request
+```
+
+Probelauf (Charter A6.8) je Schreibwerkzeug gegen ein Wegwerf-Repo: Issue anlegen und
+schließen, Kommentar, Branch, Datei auf dem Branch, Pull Request als Entwurf. Ist der
+Branch-Schutz gesetzt, gehört ein abgewiesener Direkt-Commit auf `main` als Beleg dazu.
 
 ## Scope-Vergabe: Upstream-Instanzen wie Connectoren (#151)
 
@@ -225,7 +279,7 @@ toter Upstream keine Ausfall-Falle für `JNPT_SSO_DEFAULT_SCOPE`/
 
 ```bash
 jnpt token create --allow github                       # ALLE Read-Tools der Instanz „github"
-jnpt token create --allow github:create_issue           # nur dieses eine Write-Tool
+jnpt token create --allow github:issue_write           # nur dieses eine Write-Tool
 jnpt token allow <token-id> github:search_issues        # nachträglich (wirkt sofort)
 ```
 
@@ -237,7 +291,7 @@ akzeptieren dieselben Scope-Strings — auch auf Upstream-Instanzen:
 JNPT_SSO_DEFAULT_SCOPE=github
 
 # gemischt: ein Connector-Scope + ein tool-genauer Upstream-Write-Scope
-JNPT_SSO_DEFAULT_SCOPE=demo-erp,github:create_issue
+JNPT_SSO_DEFAULT_SCOPE=demo-erp,github:issue_write
 
 # Gruppen-Claim → Scope-Mapping (wert=scope1,scope2;wert2=…), auch mit Upstreams
 JNPT_SSO_GROUP_SCOPES="11111111-…=github:search_issues;22222222-…=github"
@@ -245,8 +299,8 @@ JNPT_SSO_GROUP_SCOPES="11111111-…=github:search_issues;22222222-…=github"
 
 Die **Write-Invariante** aus [#149](#write-tools-149) bleibt unangetastet: ein
 instanz-weiter Scope (`github`) erfasst `write_tools` weiterhin **nicht** — für
-`create_issue`/`add_issue_comment` ist immer der tool-genaue Scope
-(`github:create_issue`) nötig, egal ob er per Token, SSO-Default- oder
+`issue_write`/`add_issue_comment` ist immer der tool-genaue Scope
+(`github:issue_write`) nötig, egal ob er per Token, SSO-Default- oder
 Gruppen-Scope vergeben wird.
 
 ## Grenzen (bewusst)
