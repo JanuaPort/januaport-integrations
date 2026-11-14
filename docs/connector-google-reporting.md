@@ -1,6 +1,6 @@
 # Google Search Console und GA4 über Google Reporting (#1130)
 
-Stufe 1 „Sicher verbinden“: zwei REST-Vorlagen 1.0.0, acht lesende Werkzeuge.
+Stufe 1 „Sicher verbinden“: zwei REST-Vorlagen 1.1.0, acht lesende Werkzeuge. Seit 1.1.0 bedient ein Beisteller bis zu fünf Sites: Jede Site hat eine eigene Integrationsinstanz, die den Site-Namen als deklarierten Instanzwert im Header `X-Google-Reporting-Site` sendet. Die Rechte je Site sind die tool-genauen Rechte je Instanz; die Site kommt nie aus einem Werkzeugparameter. Betreiberfolge und Grenzen stehen im README des Beistellers.
 Gebaut und synthetisch geprüft; Live-Abnahme/Release offen. Keine Google-Anmeldung
 im Gateway: der private Beisteller `google-reporting` aus januaport-plugins nutzt
 offizielle Google-Clients, feste Properties, getrennte readonly Scopes,
@@ -104,7 +104,7 @@ ChatGPT → JanuaPort SSO Neu → Connector → Beisteller → Google.
 API: [GSC](https://developers.google.com/webmaster-tools/v1/searchanalytics/query),
 [GA4](https://developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/properties/runReport).
 
-## Schreibhandgriffe (zwei weitere Vorlagen 1.0.0)
+## Schreibhandgriffe (zwei weitere Vorlagen 1.1.0)
 
 `google-search-console-manage.yaml`: list_sitemaps, get_sitemap, inspect_url und
 submit_sitemap (schreibend). `google-analytics-manage.yaml`: list_annotations,

@@ -8,24 +8,35 @@
 # Credential google-reporting is the same in all Google reporting templates;
 # its value equals the runtime-key of the plugin place plugin-google-reporting.
 # Annotations and channel groups exist only in the Admin API v1alpha. The service applies the daily
-# cap (20 write attempts per source) and logs one change line per applied write; see
+# cap (20 write attempts per source and site) and logs one change line per applied write; see
 # google-reporting/README.md in januaport-plugins.
 # Official contracts: developers.google.com/analytics/devguides/config/admin/v1/rest/v1alpha/properties.reportingDataAnnotations
 # developers.google.com/analytics/devguides/config/admin/v1/rest/v1alpha/properties.channelGroups
+# #1379: One instance per site. The required instance value site (short name from the service
+# configuration) is sent as header X-Google-Reporting-Site; rights per site are the scopes of the
+# instance. Check get_status after creating an instance: it names the resolved site and its hosts.
 name: google-analytics-manage
-version: "1.0.0"
+version: "1.1.0"
 description: >
   GA4 handles for an operator approved property: annotations that date a change on the website
   and one channel group for AI assistant sources. The property comes from the operator
   configuration, not from a parameter. Deleting or archiving is not part of this template.
   Annotations and channel groups exist only in the Admin API v1alpha, whose shape can change.
+  The site comes from the instance value site, not from a parameter.
 base_url: http://google-reporting:8092
+instance:
+  - name: site
+    label: Site-Kurzname
+    kind: text
+    example: meine-site
 auth:
   header: Authorization
   template: "Bearer {{credential}}"
   credential: google-reporting
 timeout: 25s
 min_interval: 500ms
+headers:
+  X-Google-Reporting-Site: "{{instance.site}}"
 redact_params: [date, title, description, color, annotation_id, source_hosts, channel_group_id, dry_run]
 tools:
   - name: list_annotations
@@ -38,7 +49,7 @@ tools:
     request:
       method: GET
       path: /v1/ga4/list_annotations
-    response: "{schema_version: schema_version, source: source, operation: operation, state: state, items: items, quality: quality, fetched_at: fetched_at}"
+    response: "{schema_version: schema_version, source: source, operation: operation, site: site, state: state, items: items, quality: quality, fetched_at: fetched_at}"
   - name: create_annotation
     description: >
       Creates one annotation on the configured GA4 property. The annotation covers one day.
@@ -84,7 +95,7 @@ tools:
         description: "{description}"
         color: "{color}"
         dry_run: "{dry_run}"
-    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
+    response: "{schema_version: schema_version, source: source, operation: operation, site: site, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
   - name: update_annotation
     description: >
       Changes fields of one annotation by its id. The service changes only annotations whose
@@ -132,7 +143,7 @@ tools:
         description: "{description}"
         color: "{color}"
         dry_run: "{dry_run}"
-    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
+    response: "{schema_version: schema_version, source: source, operation: operation, site: site, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
   - name: list_channel_groups
     description: >
       Lists the channel groups of the configured GA4 property: id, name, primary, system_defined,
@@ -141,7 +152,7 @@ tools:
     request:
       method: GET
       path: /v1/ga4/list_channel_groups
-    response: "{schema_version: schema_version, source: source, operation: operation, state: state, items: items, quality: quality, fetched_at: fetched_at}"
+    response: "{schema_version: schema_version, source: source, operation: operation, site: site, state: state, items: items, quality: quality, fetched_at: fetched_at}"
   - name: create_channel_group
     description: >
       Creates the channel group with the configured name (default KI-Assistenten). Its first
@@ -177,7 +188,7 @@ tools:
       body_json:
         source_hosts: "{source_hosts}"
         dry_run: "{dry_run}"
-    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
+    response: "{schema_version: schema_version, source: source, operation: operation, site: site, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
   - name: update_channel_group
     description: >
       Replaces the rules of one channel group by its id, with the given AI source hostnames and
@@ -215,4 +226,4 @@ tools:
         channel_group_id: "{channel_group_id}"
         source_hosts: "{source_hosts}"
         dry_run: "{dry_run}"
-    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
+    response: "{schema_version: schema_version, source: source, operation: operation, site: site, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
