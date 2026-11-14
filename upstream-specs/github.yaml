@@ -8,7 +8,9 @@
 # VORAUSSETZUNG: das Vault-Credential mit einem GitHub-PAT anlegen:
 #   jnpt credential set --name github-mcp-pat
 # (PAT über stdin — nie in der Spec, nie in der Shell-History). Für eine
-# read-only-Instanz genügt ein fein berechtigter, read-only-PAT.
+# read-only-Instanz genügt ein fein berechtigter, read-only-PAT. Für die Pflege
+# (write_tools unten) ein PAT nur für das eine Repo: Contents, Issues und Pull requests
+# lesen/schreiben, Metadata lesen (docs/upstream-mcp.md, „GitHub: Repo-Pflege“).
 #
 # Format-Referenz + Zwei-Instanzen-Beispiel: docs/upstream-mcp.md
 
@@ -28,16 +30,40 @@ headers:
 
 # READ-Allowlist (deny-by-default): nur diese Tools werden read-only angeboten.
 # Die Namen sind die unqualifizierten Tool-Namen, wie der GitHub-MCP-Server sie
-# meldet (ggf. an die tatsächlich angebotenen Namen anpassen).
+# meldet; live gegen tools/list geprüft am 2026-11-14 (#1380). Sammelwerkzeuge
+# bringen alle ihre Methoden mit, eine Freigabe nur für einzelne Methoden gibt es nicht:
+#   issue_read        get, get_comments, get_sub_issues, get_parent, get_labels
+#   pull_request_read get, get_diff, get_status, get_files, get_commits,
+#                     get_review_comments, get_reviews, get_comments, get_check_runs
 tools:
   - search_issues
   - get_file_contents
+  - list_issues
+  - issue_read
   - list_pull_requests
+  - pull_request_read
 
-# WRITE-Allowlist (#149, opt-in): schreibende Tools. Verlangen einen tool-genauen
-# Token-Scope (z. B. `jnpt token allow <id> github:create_issue`); ein
-# instanz-weiter Scope (`github`) erfasst sie NICHT. Für eine rein lesende
-# Instanz diesen Block weglassen.
+# WRITE-Allowlist (#149, #1380 Stufe 1 „Pflege“, opt-in): schreibende Tools. Jedes
+# verlangt einen tool-genauen Token-Scope (z. B. `jnpt token allow <id> github:issue_write`);
+# ein instanz-weiter Scope (`github`) erfasst sie NICHT. Für eine rein lesende Instanz
+# diesen Block weglassen.
+#   issue_write           Methoden create und update: anlegen, Titel/Text, Status
+#                         (state, state_reason, duplicate_of), Labels, Zuständige,
+#                         Meilenstein, Typ, Eltern-Issue
+#   add_issue_comment     Kommentar (auch Reaktion)
+#   create_branch         neuer Branch, optional von from_branch
+#   create_or_update_file eine Datei je Commit auf einem benannten Branch
+#   create_pull_request   Pull Request öffnen (auch als Entwurf)
+# Nicht freigegeben: merge_pull_request (eigene Stufe 2, #1380), update_pull_request,
+# push_files, delete_file, sub_issue_write, pull_request_review_write und Repo-/Org-Werkzeuge.
+# create_or_update_file schreibt auf JEDEN Branch, den der PAT darf, auch auf main.
+# Ob main nur über Pull Request erreichbar ist, entscheidet der Branch-Schutz auf
+# GitHub-Seite. Den setzt der Repo-Eigentümer, oder er verzichtet bewusst darauf
+# (private Repos brauchen dafür einen bezahlten GitHub-Plan):
+# docs/upstream-mcp.md, Abschnitt „GitHub: Repo-Pflege“.
 write_tools:
-  - create_issue
+  - issue_write
   - add_issue_comment
+  - create_branch
+  - create_or_update_file
+  - create_pull_request
