@@ -8,19 +8,30 @@
 # its value equals the runtime-key of the plugin place plugin-google-reporting.
 # Official contracts: developers.google.com/webmaster-tools/v1/searchanalytics/query
 # developers.google.com/analytics/devguides/reporting/data/v1/rest/v1beta/properties/runReport
+# #1379: One instance per site. The required instance value site (short name from the service
+# configuration) is sent as header X-Google-Reporting-Site; rights per site are the scopes of the
+# instance. Check get_status after creating an instance: it names the resolved site and its hosts.
 name: google-analytics
-version: "1.0.0"
+version: "1.1.0"
 description: >
   Fixed GA4 reports for an operator approved public website.
   Read-only, exact public page allowlist, 28 or 90 inclusive source-local days ending at least
   three days ago. No user attribution, free dimensions, property discovery or Odoo export.
+  The site comes from the instance value site, not from a parameter.
 base_url: http://google-reporting:8092
+instance:
+  - name: site
+    label: Site-Kurzname
+    kind: text
+    example: meine-site
 auth:
   header: Authorization
   template: "Bearer {{credential}}"
   credential: google-reporting
 timeout: 25s
 min_interval: 500ms
+headers:
+  X-Google-Reporting-Site: "{{instance.site}}"
 redact_params: [period_days, end_date, segment, limit]
 tools:
   - name: get_status
@@ -32,7 +43,7 @@ tools:
     request:
       method: GET
       path: /v1/ga4/get_status
-    response: "{schema_version: schema_version, source: source, report: report, state: state, checked_at: checked_at, definition_version: definition_version, report_definitions: report_definitions, key_events: key_events, query_reports: query_reports}"
+    response: "{schema_version: schema_version, source: source, report: report, state: state, checked_at: checked_at, definition_version: definition_version, site: site, hosts: hosts, report_definitions: report_definitions, key_events: key_events, query_reports: query_reports}"
   - name: traffic_summary
     description: >
       Sessions and engaged sessions by fixed default channel group. GA4 property timezone. Consent and attribution differ from GSC; sessions are not clicks. Existing zero is distinct from no rows.

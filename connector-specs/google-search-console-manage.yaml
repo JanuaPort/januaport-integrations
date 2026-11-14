@@ -7,24 +7,35 @@
 # All declared parameters are redacted; higher audit depth stores declared input.
 # Credential google-reporting is the same in all Google reporting templates;
 # its value equals the runtime-key of the plugin place plugin-google-reporting.
-# The service applies the daily cap (20 write attempts per source) and logs one change line per
+# The service applies the daily cap (20 write attempts per source and site) and logs one change line per
 # applied write; see google-reporting/README.md in januaport-plugins.
 # Official contracts: developers.google.com/webmaster-tools/v1/sitemaps/submit
 # developers.google.com/webmaster-tools/v1/urlInspection.index/inspect
+# #1379: One instance per site. The required instance value site (short name from the service
+# configuration) is sent as header X-Google-Reporting-Site; rights per site are the scopes of the
+# instance. Check get_status after creating an instance: it names the resolved site and its hosts.
 name: google-search-console-manage
-version: "1.0.0"
+version: "1.1.0"
 description: >
   Search Console handles for an operator approved public website: list, read and submit
   sitemaps and read the index status of approved public pages. The property comes from the
   operator configuration, not from a parameter. Deleting a sitemap is not part of this
   template.
+  The site comes from the instance value site, not from a parameter.
 base_url: http://google-reporting:8092
+instance:
+  - name: site
+    label: Site-Kurzname
+    kind: text
+    example: meine-site
 auth:
   header: Authorization
   template: "Bearer {{credential}}"
   credential: google-reporting
 timeout: 25s
 min_interval: 500ms
+headers:
+  X-Google-Reporting-Site: "{{instance.site}}"
 redact_params: [sitemap_url, page_path, dry_run]
 tools:
   - name: list_sitemaps
@@ -36,7 +47,7 @@ tools:
     request:
       method: GET
       path: /v1/gsc/list_sitemaps
-    response: "{schema_version: schema_version, source: source, operation: operation, state: state, items: items, quality: quality, fetched_at: fetched_at}"
+    response: "{schema_version: schema_version, source: source, operation: operation, site: site, state: state, items: items, quality: quality, fetched_at: fetched_at}"
   - name: get_sitemap
     description: >
       Reads one registered sitemap. The answer is sitemap_not_found when the URL is not
@@ -54,7 +65,7 @@ tools:
       query:
         - name: sitemap_url
           value: "{sitemap_url}"
-    response: "{schema_version: schema_version, source: source, operation: operation, state: state, items: items, quality: quality, fetched_at: fetched_at}"
+    response: "{schema_version: schema_version, source: source, operation: operation, site: site, state: state, items: items, quality: quality, fetched_at: fetched_at}"
   - name: inspect_url
     description: >
       Reads the Google index status of one approved public page: verdict, coverage state,
@@ -75,7 +86,7 @@ tools:
       query:
         - name: page_path
           value: "{page_path}"
-    response: "{schema_version: schema_version, source: source, operation: operation, state: state, items: items, quality: quality, fetched_at: fetched_at}"
+    response: "{schema_version: schema_version, source: source, operation: operation, site: site, state: state, items: items, quality: quality, fetched_at: fetched_at}"
   - name: submit_sitemap
     description: >
       Registers a sitemap URL for the configured Search Console property (sitemaps.submit).
@@ -106,4 +117,4 @@ tools:
       body_json:
         sitemap_url: "{sitemap_url}"
         dry_run: "{dry_run}"
-    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
+    response: "{schema_version: schema_version, source: source, operation: operation, site: site, state: state, dry_run: dry_run, target: target, changed_fields: changed_fields, before: before, after: after, fetched_at: fetched_at}"
