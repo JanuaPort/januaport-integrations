@@ -807,7 +807,10 @@ die Inbox legt. Inbox vs. anheften: `get_voucher` liefert ein `files`-Array
   tut, ist sie Rauschen, das die KI bremst. Einen Beleg
   ablegen, eine Datei anhängen, einen Entwurf anlegen oder eine Mail
   verschieben bewegt kein Geld und wirkt nicht nach außen. In der heute
-  ausgelieferten Fläche trägt den Satz deshalb kein Werkzeug. Kommt ein
+  ausgelieferten Fläche trägt den Satz deshalb genau zwei Werkzeuge:
+  `linkedin-seite-community:reply` veröffentlicht eine öffentliche Antwort als
+  Organisation, `microsoft-graph-mail:reply` sendet eine Antwort an den Absender
+  einer vorhandenen Mail. Kommt ein weiteres
   echtes Sende- oder Zahlwerkzeug, gehört es in die Liste
   `geldOderAussenwirkung` in (Produkt-Doku, nicht öffentlich); der Pin lässt
   Satz B an jedem anderen Werkzeug scheitern (auch umformuliert), und der

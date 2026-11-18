@@ -7,8 +7,8 @@ sind nicht nötig, ein Exchange-Online-Admin-Zugang schon.
 
 ## 1. Was der Connector kann — und was er ausdrücklich nicht kann
 
-**Acht Werkzeuge insgesamt: fünf aus der YAML-Spec und drei Go-native.**
-Die fünf YAML-Werkzeuge:
+**Neun Werkzeuge insgesamt: sechs aus der YAML-Spec und drei Go-native.**
+Die sechs YAML-Werkzeuge:
 
 | Tool | Was es tut | Art |
 |---|---|---|
@@ -17,17 +17,21 @@ Die fünf YAML-Werkzeuge:
 | `microsoft_graph_mail_list_attachments` | die Anhänge **einer** Nachricht auflisten (nur Name, Typ, Größe — nie die Datei) | lesend |
 | `microsoft_graph_mail_read_attachment` | den **Textinhalt** genau eines Anhangs holen | lesend |
 | `microsoft_graph_mail_create_draft` | eine Mail als **Entwurf** ins Postfach legen | **schreibend** |
+| `microsoft_graph_mail_reply` | **eine** vorhandene Nachricht beantworten, nur an deren Absender (seit 3.0.0, **Opt-in**, siehe Abschnitt 11) | **schreibend, sendet** |
 
-**Es gibt kein Sende-Tool — auch kein „vorbereitetes".** JanuaPort schreibt den
-Entwurf, ein Mensch öffnet ihn in Outlook, prüft ihn und klickt auf Senden. Das
-ist eine Produktentscheidung und zugleich technisch abgesichert: Die Anwendung
-bekommt **kein** `Mail.Send`. Microsoft schreibt zur Rolle
-`Application Mail.ReadWrite` ausdrücklich: *„Doesn't include permission to send
-mail."* Ein Agent kann über diesen Weg also nicht senden, selbst wenn er es
-wollte.
+**Gesendet wird nur als Antwort, und nur als Opt-in.** `create_draft` sendet nichts: JanuaPort
+schreibt den Entwurf, ein Mensch öffnet ihn in Outlook, prüft ihn und klickt auf Senden.
+Das einzige Werkzeug, das sendet, ist `reply` (Abschnitt 11): Es beantwortet **eine**
+vorhandene Nachricht, nur an deren Absender, ohne weitere Empfänger, ohne Anhänge,
+ohne Weiterleiten. Es gibt kein `reply_all` und kein `send_mail`. `reply` läuft nur, wenn
+der Admin es bei der Werkzeugauswahl wählt, ein Token das tool-genaue Recht trägt und
+Exchange der App die Rolle `Application Mail.Send` mit einem eigenen Bereich nur auf das
+Anfrage-Postfach gegeben hat. Eine App ohne diese Rolle kann nicht senden: Microsoft
+schreibt zur Rolle `Application Mail.ReadWrite` ausdrücklich *„Doesn't include permission
+to send mail."* Die Graph-API-Berechtigung `Mail.Send` wird **nie** erteilt.
 
 **Bestätigung (heute, Fassung 2.0.2):** Alle Schreibwerkzeuge dieser
-Integration (`create_draft` und die drei Go-nativen unten) sagen der KI
+Integration (`create_draft`, seit 3.0.0 `reply` und die drei Go-nativen unten) sagen der KI
 dasselbe: Sie sind als Schreibvorgang annotiert, der Client kann deshalb
 nachfragen, JanuaPort selbst fragt nie, und sie brauchen das tool-genaue
 Recht. Der frühere Satz „a human must confirm it … do not call it
@@ -280,6 +284,10 @@ sich eignet und welche nicht:
 4. **Zugriff in Exchange Online auf genau ein Postfach begrenzen**
 5. Spec anpassen, laden und in JanuaPort berechtigen
 
+Das Antworten auf Mails (`reply`) ist **kein** sechster Pflichtschritt, sondern ein
+eigenes Opt-in mit eigener Sende-Grenze: Abschnitt 11. Dort steht auch, was **vor** der
+Einrichtung zu entscheiden ist (ein eigenes Anfrage-Postfach).
+
 > ⚠️ **Schritt 4 ist keine Feinheit, sondern die eigentliche
 > Sicherheitsmaßnahme.** Eine Microsoft-365-App-Berechtigung gilt von sich aus
 > **mandantenweit — für ALLE Postfächer**. Ohne Schritt 4 dürfte dieser
@@ -315,7 +323,8 @@ erteilen**.
 
 Eine Berechtigung genügt: `Mail.ReadWrite` schließt das Lesen ein. `Mail.Read`
 zusätzlich zu erteilen bringt nichts und macht das Bild im Portal nur unklarer.
-`Mail.Send` wird **nicht** erteilt.
+Die Graph-API-Berechtigung `Mail.Send` wird **nicht** erteilt. Für `reply` gibt es
+`Mail.Send` nur als Exchange-Rolle mit eigenem Bereich (Abschnitt 11, Schritt 11.2).
 
 Das gilt auch für die **Anhänge**: Das Auflisten und das Lesen eines Anhangs
 brauchen laut Microsoft-Doku app-only `Mail.Read` — davon ist `Mail.ReadWrite`
@@ -342,7 +351,7 @@ die Obermenge. **Kein neuer Consent, kein zusätzlicher Handgriff im Portal.**
 >
 > Verengt wird an zwei anderen Stellen:
 >
-> * **In JanuaPort** auf die acht beschriebenen Werkzeuge: Deny-by-default, ein Token bekommt
+> * **In JanuaPort** auf die neun beschriebenen Werkzeuge: Deny-by-default, ein Token bekommt
 >   nur, was ihm ausdrücklich erlaubt wurde, das Schreib-Tool zusätzlich nur über
 >   einen **tool-genauen** Scope — und jeder Aufruf steht im Audit-Log.
 > * **In Exchange** auf genau ein Postfach (Schritt 4).
@@ -494,6 +503,11 @@ zusätzlich nötig: `save_attachment` braucht eine konfigurierte Ziel-Ablage
 `<ziel>:write_file` auf genau dieser Ablage — ohne beides lehnt das Werkzeug
 jeden Aufruf mit einer klaren, pfadfreien Meldung ab, statt irgendwo zu
 schreiben oder Graph überhaupt zu kontaktieren.
+
+**`reply` steht bewusst nicht in dieser Liste.** Das Antworten ist ein eigenes Opt-in mit
+eigener Sende-Grenze in Exchange (Abschnitt 11); das Recht
+`microsoft-graph-mail:reply` wird erst dort vergeben, und ein Scope auf die ganze
+Integration erfasst es nicht.
 
 ## 8. Was `jnpt connector check` hier meldet — und was nicht
 
@@ -714,10 +728,147 @@ Teil davon bestätigt; was er nicht berührt hat, bleibt hier offen benannt:
   Text oder Absender.
   `list_messages` projiziert `isRead` nicht, deshalb läuft die Gegenprobe über
   den Filter.
+- **(offen) `reply` gegen die echte API.** Gegen einen Fake-Graph belegt:
+  `POST …/messages/{id}/reply` mit dem Body `{"comment": …}` und nichts sonst, die
+  Message-ID als ein Pfadsegment, Graphs 202 ohne Body als Erfolg. Live zu belegen
+  (Probelauf in Abschnitt 11.5): (a) dass Graph die Antwort bei gesetztem `replyTo`
+  wirklich an `replyTo` adressiert und sonst an `from`; (b) die Antwort in „Gesendete
+  Elemente" mit dem Wortlaut des `comment`; (c) die Gegenprobe 403 aus Abschnitt 11.2
+  gegen ein lesbares, aber nicht beantwortbares und gegen ein fremdes Postfach nach
+  der Wirkzeit; (d) dass die Rolle `Application Mail.Send` allein für das Antworten
+  genügt und keine weitere Berechtigung nötig ist.
   ⚠️ **Befund nebenbei:** Beim Verschieben in den Ordner, in dem die Nachricht
   schon liegt, vergibt Graph **keine** neue ID. Der damalige Erfolgstext von
   `move_message` behauptete das trotzdem; heute sagt der Text in
   diesem Fall, dass die ID unverändert gilt.
+
+## 11. Antworten (Opt-in): das Werkzeug `reply`
+
+Seit Fassung **3.0.0** (PO-Entscheid 14.11.2026) gibt es einen Sendeweg, und
+nur diesen: `reply` beantwortet **eine** vorhandene Nachricht, **nur an deren
+Absender**. Es gibt weder `reply_all` noch ein freies `send_mail`, kein Weiterleiten,
+keine Anhänge und keine frei wählbaren Empfänger. Alle anderen Werkzeuge dieser
+Vorlage senden nichts. Standard ist **aus**: `reply` läuft nur, wenn ein Admin es
+ausdrücklich wählt (11.3) und ein Token das tool-genaue Recht trägt.
+
+Wohin Graph die Antwort adressiert, entscheidet die Nachricht: Ist `replyTo` gesetzt,
+geht sie an `replyTo`, sonst an `from`. `get_message` zeigt beides (`from`,
+`replyTo`, dazu `ccRecipients`). Der Werkzeugtext nennt das als Tatsache und sagt
+dazu: Weicht die Domain von `replyTo` von der Domain von `from` ab und ist `from` kein
+bekanntes Formular- oder Portal-Postfach des Betreibers, ist `create_draft` der
+Weg — ein Mensch prüft den Entwurf und sendet. Der Kern bricht bei abweichendem
+`replyTo` **nicht** ab: Kontaktformulare und Buchungsportale senden von einer
+noreply-Adresse mit `replyTo` auf die anfragende Person, ein Abbruch legte den
+Hauptfall lahm.
+
+### 11.1 Zuerst: ein eigenes Anfrage-Postfach und ein enges Token
+
+**Das gehört vor die Einrichtung.** Der größere Schaden ist nicht die Adresse, sondern
+der **Inhalt**: Ein Fremder fragt nach „meinen Terminen", und die KI antwortet mit
+Daten aus anderen Mails desselben Postfachs. Verhindern kann das kein Werkzeug, die
+Verantwortung liegt beim Betreiber. Zwei Empfehlungen machen es klein:
+
+1. **Ein eigenes Anfrage-Postfach**, in dem nur Anfragen von außen liegen — kein
+   Postfach mit Rechnungen, Verträgen oder interner Post. Dazu eine eigene Integration
+   mit eigener App-Registrierung und eigenem Credential (Schritt 1 bis 3), deren
+   Exchange-Bereiche **nur** dieses Postfach umfassen.
+2. **Ein Token, das nur dieses Postfach liest und nur antwortet:** tool-genau
+   `list_messages`, `get_message` und `reply` und nichts darüber hinaus (kein
+   `create_draft`, kein `save_attachment`, kein `move_message`, solange der Ablauf sie
+   nicht braucht). Die Postfach-Grenze selbst liegt allein in Exchange (11.2), weil
+   `mailbox` ein Parameter ist, den die KI wählt.
+
+### 11.2 Die Sende-Grenze in Exchange: eigener Bereich, nicht der des Lesens
+
+`Mail.Send` gibt es hier **nur als Exchange-Rolle** `Application Mail.Send` über
+**RBAC for Applications**, mit einem **eigenen Management Scope** allein auf das
+Anfrage-Postfach — **nie derselbe Scope wie fürs Lesen**. Viele Betreiber haben die
+Leserolle auf mehrere Postfächer gelegt; teilte sich das Senden diesen Bereich, dürfte
+die App aus jedem dieser Postfächer antworten. Es gilt: **keine Graph-API-Berechtigung
+`Mail.Send`.** Sie gälte für alle Postfächer des Mandanten, und
+Rechte aus Entra und Exchange addieren sich.
+
+```powershell
+# Zusätzlich zur Leserolle aus Schritt 4: eigener Bereich nur für das Antworten.
+# <objekt-id> = Objekt-ID der UNTERNEHMENSANWENDUNG (nicht der App-Registrierung).
+New-ManagementScope -Name "JanuaPort Antwort-Scope" -RecipientRestrictionFilter "PrimarySmtpAddress -eq 'anfragen@example.com'"
+New-ManagementRoleAssignment -App <objekt-id> -Role "Application Mail.Send" -CustomResourceScope "JanuaPort Antwort-Scope"
+```
+
+Ein eigenes Skript gibt es dafür nicht; die Befehle sind die aus
+[`examples/exchange-postfach-grenze.ps1`](../examples/exchange-postfach-grenze.ps1), mit
+der Rolle `Application Mail.Send` und einem zweiten, eigenen Scope.
+
+**Die API-Berechtigungen der App ansehen** (Entra → App-Registrierung →
+API-Berechtigungen): Dort darf **keine** Graph-Berechtigung `Mail.Send` stehen. Was dort
+steht, gehört in den **Abnahmeprotokoll der Einrichtung** (nur die Namen der Berechtigungen, keine Werte).
+
+**Gegenprobe nach der Wirkzeit, mit Uhrzeit.** Die Richtlinie wirkt erst nach 30 Minuten
+bis 2 Stunden (Schritt 4, „Für beide Varianten"). Die Proben laufen **danach** und werden
+mit der **Uhrzeit** festgehalten; im Abnahmeprotokoll steht nur die Klasse der Antwort:
+
+| Probe | Erwartung |
+|---|---|
+| `reply` gegen ein Postfach, das die App **lesen darf, aber nicht beantworten soll** | **403** |
+| danach `reply` gegen ein **fremdes** Postfach | **403** |
+
+Gibt es nur ein lesbares Postfach, reicht die zweite Zeile. Die Proben verwenden eine
+**Testmail von einer eigenen Testadresse**, die vorher in das jeweilige Postfach gelegt
+wurde: Hielte die Grenze nicht, ginge die Antwort an die eigene Testadresse und nicht an
+einen echten Absender. Bei **202** statt 403: nicht weitermachen, die Rolle und die
+Entra-Zustimmung prüfen. Ein 403 allein belegt die Grenze nicht, es zeigt nur, dass dieser
+Aufruf abgelehnt wurde — deshalb beide Proben.
+
+### 11.3 Opt-in: `reply` gezielt wählen, das Recht tool-genau vergeben
+
+- **Neuanlage in der GUI:** Die GUI wählt `reply` nicht vor; der Admin hakt es
+  ausdrücklich an. REST und Admin-MCP verlangen ohnehin eine ausdrückliche Werkzeugliste.
+- **Anhebung einer vorhandenen Integration:** `jnpt connector upgrade <name> --werkzeug reply --yes`
+  (REST und Admin-MCP: `add_tools`). Ohne diese Angabe wird das neue Werkzeug nur
+  gemeldet. `--mit-neuen-werkzeugen` übernimmt dagegen **alle** neuen Werkzeuge der Vorlage.
+- **⚠️ `jnpt connector add --file`** übernimmt **alle Werkzeuge der Datei**, also auch
+  `reply`. Wer die Datei der Vorlage unverändert lädt und `reply` nicht will, entfernt den
+  Block `- name: reply` vorher.
+- **Das Recht ist tool-genau:** `jnpt token allow <token-id> microsoft-graph-mail:reply`
+  (bei einer Integration mit anderem Namen deren Name). Ein Scope auf die ganze Integration
+  erfasst `reply` nicht, und das Recht auf `reply` öffnet auch `create_draft` nicht.
+
+### 11.4 Der Ablauf des Betreibers
+
+Welche Absender Formulare und Portale sind, weiß nur der Betreiber. Er nennt seine
+**Formular- und Portal-Absender** (die Postfächer, von denen Kontaktformular,
+Buchungsportal und ähnliche Dienste senden) im **Prompt bzw. im Ablauf** der KI. Für jede
+andere Mail, bei der die Domain von `replyTo` und von `from` abweicht, nimmt die KI
+`create_draft`. Automatische Antworten (Abwesenheit, Zustellberichte) sind keine
+Anfragen und werden nicht beantwortet. Höchstens **10 Antworten je UTC-Tag**; ein weiterer
+Aufruf wird bis zum nächsten UTC-Tag abgewiesen.
+
+### 11.5 Probelauf: ohne `dry_run`, in zwei Schritten
+
+`reply` hat **kein `dry_run`** (bewusste Ausnahme; sie steht im Kopf der Vorlage).
+Der Probelauf nach jeder neuen Fassung:
+
+1. **Der trockene Pfad:** `get_message` auf einer **Testmail**. Es zeigt `from`, `replyTo`
+   und `ccRecipients`, also den Empfänger, an den Graph adressieren wird.
+2. **Eine echte Antwort** auf diese Testmail, gesendet aus einem **eigenen Testpostfach**
+   an das Anfrage-Postfach. Erwartet: das Ergebnis `{"status": 202}`, ein Audit-Eintrag mit
+   Status `ok` ohne Text, und die Antwort in **„Gesendete Elemente"** des Anfrage-Postfachs
+   — mit dem gesendeten Wortlaut und dem Empfänger. Eine zweite Testmail mit gesetztem
+   `replyTo` (Outlook: „Antworten an") belegt, dass die Antwort wirklich an `replyTo` geht
+   und nicht an `from`.
+
+### 11.6 Ehrliche Grenzen
+
+- **Das Audit hat den Wortlaut nicht.** `comment` ist geschwärzt (`redact_params`); den
+  Wortlaut und die tatsächliche Empfängeradresse belegen allein „Gesendete Elemente".
+  Postfach und Nachrichten-ID stehen im Audit.
+- **`replyTo` bestimmt der Absender der Mail.** Wer eine Mail schreibt, legt über `replyTo`
+  den Empfänger der Antwort fest, und `replyTo` prüft weder SPF noch DMARC. Begrenzt wird
+  das durch den Deckel von 10 je Tag, durch das Urteil der KI und durch den Ablauf (11.4),
+  nicht durch den Kern. Ging eine Antwort an eine Adresse, die nicht angefragt hat, bitte
+  melden: Das ist der Auslöser, eine Prüfung in den Kern zu holen.
+- **Der Inhalt** der Antwort kommt aus dem Zugriff der KI auf das Postfach. Deshalb 11.1.
+- **Keine Zusage über die Zustellung.** 202 heißt, Graph hat die Antwort angenommen.
 
 ## Beilage: fertiges Skript für Schritt 4 (Variante A)
 
