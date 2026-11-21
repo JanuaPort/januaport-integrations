@@ -71,7 +71,11 @@ tools:
 ```
 
 Die vollständige, lauffähige Demo-Spec samt Beispiel-Schema liegt im Repository:
-(Produkt-Doku, nicht öffentlich) und (Produkt-Doku, nicht öffentlich).
+(`demo-wawi.yaml` und `seed_wawi.sql`) im Produkt-Repository, nicht öffentlich.
+Sie hat fünf Werkzeuge: `list_open_orders`, `get_order`, `count_orders_by_status`,
+`list_customers` (Kundennummer und Name, sonst nichts — Bankdaten und Adresse
+bleiben in der Datenbank; auf diese Nummern verweist der Parameter `kunde`) und
+das schreibende `set_order_status`.
 
 ## Felder im Detail
 
@@ -79,7 +83,7 @@ Die vollständige, lauffähige Demo-Spec samt Beispiel-Schema liegt im Repositor
 
 | Feld | Pflicht | Bedeutung |
 |---|---|---|
-| `name` | ja | Eindeutiger Name der Integration. Wird zum **Prefix** jedes Tool-Namens (`demo_wawi_list_open_orders`); Bindestriche werden zu Unterstrichen. Zugleich die **Berechtigungs-Identität** (`name` bzw. `name:tool` als Scope) — er muss über **alle** Integrationsarten eindeutig sein, sonst startet der Gateway nicht. ⚠️ **Seit Bug #596:** Ein Name, der nach dieser Normalisierung kein gültiges Präfix ergibt (Großbuchstaben, Umlaute, Punkt, Leerzeichen, führende Ziffer), wird bei der **Anlage über die Admin-Fläche abgelehnt**; ein solcher Name im **Bestand** hält den Start NICHT auf, erzeugt aber beim Start eine **WARN-Zeile** mit Namen und Grund. Umbenannt wird nichts automatisch — ein Rename berührt Scopes, Tokens und Team-Zuordnungen. **Reserviert** (das Gateway belegt diese Namen selbst — eine Integration dieses Namens verhindert den Start): `memory`, `kartei`, `usecase` (#642), `wissen` (#647), `ablage` (#726), `ping`, `catalog`, `report_problem`. |
+| `name` | ja | Eindeutiger Name der Integration. Wird zum **Prefix** jedes Tool-Namens (`demo_wawi_list_open_orders`); Bindestriche werden zu Unterstrichen. Zugleich die **Berechtigungs-Identität** (`name` bzw. `name:tool` als Scope) — er muss über **alle** Integrationsarten eindeutig sein, sonst startet der Gateway nicht. ⚠️ **Heute gilt:** Ein Name, der nach dieser Normalisierung kein gültiges Präfix ergibt (Großbuchstaben, Umlaute, Punkt, Leerzeichen, führende Ziffer), wird bei der **Anlage über die Admin-Fläche abgelehnt**; ein solcher Name im **Bestand** hält den Start NICHT auf, erzeugt aber beim Start eine **WARN-Zeile** mit Namen und Grund. Umbenannt wird nichts automatisch — ein Rename berührt Scopes, Tokens und Team-Zuordnungen. **Reserviert** (das Gateway belegt diese Namen selbst — eine Integration dieses Namens verhindert den Start): `memory`, `kartei`, `usecase`, `graph`, `freigabe` und das Präfix `freigabe_`, `teamdoc` und das Präfix `teamdoc_`, `wissen`, `ablage`, `etl` (bei Team-Specs auch das Präfix `etl_`; ein **Bestand** `etl` startet, wird aber nicht geladen und per Warnung, Audit und Mail gemeldet), `ping`, `catalog`, `report_problem`. Die Liste ist nicht abschließend: Das Gateway sperrt außerdem Namen und Präfixe für seine eigenen Werkzeugfamilien, unter anderem `app`, `skript`, `script`, `agent`, `desktop` sowie die Präfixe `app_`, `skript_`, `script_`, `agent_`, `desktop_`, `freigabe_`, `teamdoc_` und `run_control_`; ein Treffer verhindert den Start bzw. wird bei der Anlage abgewiesen. |
 | `driver` | ja | `postgres` oder `mssql` (SQL Server, Lesen / Schreiben, nur im Firmenbesitz, siehe „SQL Server"). Jeder andere Wert ist ein Ladefehler; die Meldung zählt die unterstützten Treiber auf. |
 | `connection` | ja | Die reviewbaren Verbindungsangaben (siehe unten) — **ohne Passwort**. |
 | `credential` | ja | **Name** des Datenbank-Passworts im Vault, nie das Passwort selbst. Anlegen mit `jnpt credential set --name <name>`. Gehört zum **Lese-Benutzer**. |
@@ -133,6 +137,7 @@ eingecheckt werden.
 | `write` | nein | `true` markiert das Tool als **schreibend** (siehe „Schreiben"). Default `false`. |
 | `max_affected_rows` | nein | Nur an Schreib-Tools: Obergrenze der veränderten Zeilen. Default `1`, harte Obergrenze `1000`. |
 | `privacy` | nein | Pseudonymisierung einzelner Spalten (siehe unten). |
+| `text_format` | nein | Textform des **Text-Blocks** der Antwort: `json` (Standard, = Feld weglassen) oder `toon` (siehe „Textform des Text-Blocks"). Ein Wechsel ist für den Flächen-Wächter eine andere Antwortform. |
 
 ### `params[]`
 
@@ -515,6 +520,31 @@ das Tool ist dort schlicht unbenutzbar. Ein leeres Ergebnis kommt als
 `{"rows": []}` (nie `null`): „keine Treffer" ist eine gültige Antwort und darf
 nicht wie ein Fehler aussehen.
 
+### Textform des Text-Blocks (`text_format`)
+
+Stufe 1, gebaut, unveröffentlicht. Der **Text-Block** der Antwort ist
+ab Werk das kompakte JSON der Hülle `{"rows": […]}` — byteweise, wie bisher. Ein
+Werkzeug mit `text_format: toon` gibt ihn stattdessen als
+[TOON](https://github.com/toon-format/spec)-Tabelle aus, wenn das Ergebnis
+**mindestens 5 Zeilen** hat (alle Zeilen haben dieselben Spalten, nur
+einfache Werte) und der TOON-Text kürzer ist:
+
+```text
+rows[3]{auftrag_nr,kunde_name,betrag}:
+  A-2026-0001,‹name-7f3a91›,1234.5
+  A-2026-0002,‹name-0c11d2›,80
+  A-2026-0003,‹name-b9e4a7›,"12,5 Mio"
+```
+
+Bei weniger Zeilen, einem Schreib-Ergebnis (`{"affected": n}`) oder jeder anderen
+Form bleibt der Text JSON. **Was sich nicht ändert:** `structuredContent` und das
+Audit (`ReportResponse`) bleiben JSON; die Pseudonymisierung läuft vorher, ein
+Kürzel `‹label-id›` steht im TOON-Text byteweise genauso, ein Klartext kommt nie
+hinzu. Zahlen stehen in kanonischer Form (`1234.50` → `1234.5`, kein Exponent) —
+der Wert bleibt exakt, nur überflüssige Nullen entfallen. Bei `toon` hängt der
+Gateway einen festen Formathinweis an die Beschreibung. Es gibt keinen Schalter je
+Anlage oder Token. Regeln, Quoting und Grenzen: [Textform in der REST-Spec](connector-spec.md#textform-des-text-blocks-text_format).
+
 Typabbildung (bewusst entschieden, nicht zufällig):
 
 | PostgreSQL | JSON | Anmerkung |
@@ -659,6 +689,10 @@ geänderten Stellen, statt sie zu ersetzen.
 
 ## Prüfen und betreiben
 
+Alle drei CLI-Befehle verlangen den vorhandenen Anlagen-Master-Key
+(`JNPT_MASTER_KEY` oder `JNPT_MASTER_KEY_FILE`). Fehlt er, folgt Exit 1 vor
+Store/Vault; weder Datenbank noch Schlüsseldatei werden angelegt.
+
 ```bash
 jnpt database list                  # Name, Treiber, Ziel, Benutzer, Tool-Zahl
 jnpt database check                 # alle Integrationen in Stufen prüfen
@@ -684,8 +718,14 @@ jnpt database selftest demo-wawi    # eine echte Abfrage gegen die echte DB
    Änderung. Ein Tippfehler in einem Spalten- oder Alias-Namen (auch in einem
    Filter-Fragment) fällt damit hier auf und nicht beim ersten Agenten-Aufruf.
 
+Bei einer Integration mit `identity` (Abschnitt „Rechte der Datenbank
+nutzen") kommt die Stufe **`quellrechte`** dazu: Login-Wächter und Warnungen zu
+RLS, `FORCE`, Views und Mitgliedschaften.
+
 **`selftest`** ist das Live-Urteil: Es führt das erste Tool **ohne
 Pflichtparameter** wirklich aus und meldet Zeilen-/Spaltenzahl und Laufzeit.
+Bei einer Integration mit `identity` liest er keine Nutzzeile — er hat keine
+Person und bereitet die Abfrage nur vor.
 Gibt es kein solches Tool, wird der Selbsttest **übersprungen** (kein Fehler) —
 plane deshalb ein billiges, parameterloses Übersichts-Tool ein (im Beispiel:
 `count_orders_by_status`). Ein **leeres Ergebnis ist hier ausdrücklich KEIN
@@ -718,6 +758,193 @@ beide Ausgaben sind passwort- und datenfrei.
   erst beim ersten Aufruf, und `jnpt database check` sagt, woran es liegt.
 - **Der Verbindungs-Pool ist klein** (höchstens 4 Verbindungen, im Leerlauf
   keine). Ein Bestandssystem soll von JanuaPort nichts merken.
+
+## Rechte der Datenbank nutzen (`identity`)
+
+Statt dass JanuaPort entscheidet, welche Zeilen ein Agent sieht, kann es bei
+PostgreSQL **die angemeldete Person an die Datenbank durchreichen**. Dann
+entscheiden die Zeilenrechte der Datenbank (Row-Level-Security, RLS). Die
+Werkzeugrechte in JanuaPort gelten weiter; über die **Zeilen** entscheidet die
+Datenbank. Stand: **im Bau**, nur `driver: postgres`, nur
+für Datenbanken im Firmenbesitz, PostgreSQL ab 14 (die Rechte-Prüfung kennt
+`pg_read_all_data`), empfohlen ab 16.
+
+```yaml
+identity:
+  mode: set_role         # oder session_variable
+  claim: subject         # Standard; oder email (nur mit email_verified=true)
+  role_prefix: jnpt_     # bei set_role Pflicht, bei session_variable verboten
+```
+
+| Modus | Was JanuaPort je Aufruf tut | Was der DBA baut |
+|---|---|---|
+| `session_variable` | `SELECT set_config('jnpt.user', $1, true)` | RLS-Policies, die `jnpt.user` lesen |
+| `set_role` (**der stärkere Modus**) | `SELECT set_config('role', $1, true)` mit `$1` = `role_prefix` + Kennung | je Person eine Rolle; GRANTs **und** Policies gelten je Person |
+
+Beide Wege laufen in derselben Transaktion direkt nach dem Zeitlimit, im Lese-
+und im Schreibpfad, **mit Bind-Parameter** — es wird nichts in SQL formatiert.
+`true` heißt transaktionslokal: Nach dem Aufruf ist die Kennung wieder weg.
+`set_config('role', …, true)` wirkt wie `SET LOCAL ROLE`, auch in der
+read-only-Transaktion des Lesepfads (gegen PostgreSQL 16 belegt).
+
+**Wer ist „die Person"?** Nur ein SSO-Aufruf, direkt auf `/mcp` oder über eine
+Sicht. **Ohne Person** sind: Tokens jeder Art (auch persönliche), Lauf-Tokens von
+Skript-, Agenten- und Desktop-Läufen, Zeitpläne und Ketten. Ein Aufruf ohne
+Person ist bei einer Integration mit `identity` **nur erlaubt, wenn der wirksame
+Zugang für dieses Werkzeug einen Datenfilter trägt**; dann liest der technische
+Login ohne Kennung, und der Filter greift. Sonst lautet die Absage
+`abgelehnt:keine_person`. „Wirksamer Zugang" heißt dieselben Rechte, die auch
+die Datenfilter-Prüfung liest: Ein Team-Token muss den Filter seines Teams
+tragen, ein Lauf den seines Aufrufers (UND über Deckel und Lauf); ein
+ungefilterter Eintrag neben einem gefilterten macht das Werkzeug ungefiltert
+und zählt nicht. Mit Person wird ein Datenfilter an diesem Werkzeug
+übersprungen; beim Speichern eines solchen Filters warnt JanuaPort „wirkt nur
+für Aufrufe ohne Person". Wie der Filter selbst funktioniert, steht in
+(Produkt-Doku, nicht öffentlich). Der ETL-Strom ist bei einer
+solchen Integration gesperrt, und der Selbsttest liest keine Nutzzeile (er
+bereitet die Abfrage nur vor).
+
+### Die Kennung
+
+- **`subject`** (Standard, **der sichere Weg**): die SSO-Identität, also `oid`
+  (Entra) bzw. `sub:<sub>`. Der Nutzer kann sie nicht ändern.
+- **`email`**: die Adresse aus dem geprüften Token, **nur mit
+  `email_verified=true`** (ein JSON-`true`; ein Text `"true"` zählt nicht). Nur
+  für IdPs, bei denen **ein Admin** die Adresse setzt — bei manchen IdPs ändert
+  der Nutzer sie selbst (Keycloak je nach Realm), und `email_verified` hilft
+  nur, wenn der IdP es beim Ändern zurücksetzt.
+- Die Kennung reist **unverändert** — keine Anpassung von Groß- und
+  Kleinschreibung. Lege Rollen exakt so an, wie sie im Token stehen
+  (`CREATE ROLE "jnpt_0f3A…"` mit Anführungszeichen, sobald Großbuchstaben oder
+  Sonderzeichen vorkommen).
+- **Grenzen:** bei `set_role` höchstens 63 Byte für Präfix plus Kennung (die
+  Länge eines Rollennamens — darüber würde PostgreSQL kürzen, und zwei Personen
+  könnten in derselben Rolle landen), bei der Variable 256 Byte; keine
+  Steuerzeichen. Ein Präfix plus Kennung, das `none` ergäbe, wird abgelehnt
+  (`none` hieße „zurück auf den Login"). Verstoß: `abgelehnt:kennung`.
+- Die Kennung steht nie in einer Meldung und nie im Audit.
+
+### DBA-Rezept (getestet gegen PostgreSQL 16)
+
+Für **`set_role`**, ab PostgreSQL 16:
+
+```sql
+-- Der technische Login: KEINE Tabellenrechte, nur die Mitgliedschaften.
+CREATE ROLE jnpt_login LOGIN PASSWORD '…';
+
+-- Je Person eine Rolle mit Pflicht-Präfix, exakt die Kennung dahinter.
+CREATE ROLE "jnpt_0f3a…" NOLOGIN;
+GRANT USAGE ON SCHEMA erp TO "jnpt_0f3a…";
+GRANT SELECT ON erp.belege TO "jnpt_0f3a…";
+
+-- Der Login darf in die Rolle WECHSELN, erbt aber nichts.
+GRANT "jnpt_0f3a…" TO jnpt_login WITH INHERIT FALSE, SET TRUE;
+
+-- Zeilenrechte, auch für den Tabelleneigentümer erzwungen.
+ALTER TABLE erp.belege ENABLE ROW LEVEL SECURITY;
+ALTER TABLE erp.belege FORCE ROW LEVEL SECURITY;
+CREATE POLICY je_person ON erp.belege FOR ALL
+  USING (eigner_rolle = current_user) WITH CHECK (eigner_rolle = current_user);
+```
+
+Vor PostgreSQL 16 (oder als Alternative): den Login mit `NOINHERIT` anlegen
+(`CREATE ROLE jnpt_login LOGIN NOINHERIT …`) und die Rollen ohne Zusatz
+gewähren. Erbt der Login eine Personenrolle, liest jeder Aufruf **ohne** Person
+mit der Summe aller Personen — genau das verhindert der Login-Wächter unten.
+
+Für **`session_variable`**:
+
+```sql
+GRANT USAGE ON SCHEMA erp TO jnpt_login;
+GRANT SELECT ON erp.belege TO jnpt_login;      -- direkt, nicht über eine geerbte Gruppenrolle
+ALTER TABLE erp.belege ENABLE ROW LEVEL SECURITY;
+ALTER TABLE erp.belege FORCE ROW LEVEL SECURITY;
+CREATE POLICY je_person ON erp.belege FOR ALL
+  USING (eigner = nullif(current_setting('jnpt.user', true), ''))
+  WITH CHECK (eigner = nullif(current_setting('jnpt.user', true), ''));
+```
+
+**Warum `nullif(…, '')`:** Eine wiederverwendete Verbindung liefert nach einer
+transaktionslokal gesetzten Variable `''` statt NULL. Mit `nullif` gilt ohne
+Kennung „keine Zeile"; ohne `nullif` passte eine Zeile mit leerem `eigner`.
+
+**Technische Aufrufe bei `session_variable`:** Ein Aufruf ohne Person
+mit Datenfilter läuft mit leerem `jnpt.user`. Der Login sieht dann nur, was die
+Policy für eine leere Kennung erlaubt, im Rezept oben also **nichts**. Wer
+technische Aufrufe mit Datenfilter nutzen will, legt dafür eine eigene Policy an,
+etwa `USING (nullif(current_setting('jnpt.user', true), '') IS NULL AND region = …)`.
+Damit ist auch klar, dass der Datenfilter im Gateway dann die einzige Grenze dieser Aufrufe ist.
+
+**Für beide Modi:**
+
+- **Kein `BYPASSRLS`**, kein Superuser, kein `CREATEROLE`, keine Mitgliedschaft
+  in `pg_read_all_data`/`pg_write_all_data` — weder für den Login noch für eine
+  Personenrolle.
+- **`FORCE ROW LEVEL SECURITY`** auf jeder Tabelle, die der Login oder eine
+  Personenrolle besitzt: Ein Eigentümer umgeht RLS sonst.
+- **Views mit `security_invoker = true`** (`CREATE VIEW … WITH
+  (security_invoker = true) AS …`, ab PostgreSQL 15): Ohne die Option liest ein
+  View mit den Rechten seines Eigentümers, und die Zeilenrechte der Person
+  greifen nicht.
+- **`set_role` ist der stärkere Modus:** Dort gelten auch GRANTs je Person, und
+  ein Fehler in einer Policy fällt eher auf, weil eine Rolle ohne GRANT gar
+  nichts liest. Bei `session_variable` hängt alles an den Policies.
+
+### Was JanuaPort je Aufruf prüft
+
+- **Login-Wächter (vor `set_config`, in beiden Modi):** Ist der technische
+  Login Superuser, hat er `BYPASSRLS` oder `CREATEROLE`, ist er Mitglied in
+  `pg_read_all_data`/`pg_write_all_data`, **erbt** er eine Rolle
+  (`pg_auth_members.inherit_option`, vor 16 `rolinherit`) oder hält er eine
+  Mitgliedschaft `WITH ADMIN OPTION` (Selbstvergabe), wird abgelehnt:
+  `abgelehnt:umgeht_rls`. Beim Variablen-Modus deshalb die Tabellenrechte
+  **direkt** an den Login geben, nicht über eine geerbte Gruppenrolle.
+- **Rollen-Wächter (nach dem Wechsel, `set_role`):** Ist die Zielrolle
+  Superuser, hat sie `BYPASSRLS` oder ist sie Mitglied in
+  `pg_read_all_data`/`pg_write_all_data`, wird abgelehnt.
+- Beide laufen **bei jedem Aufruf** — ein späteres `ALTER ROLE` greift sofort.
+- **Rollenfehler** kommen nur aus dem `set_config`-Schritt: „Rolle zur Kennung
+  fehlt" (PostgreSQL meldet `22023`) oder „Login darf nicht in die Rolle
+  wechseln" (`42501`) → `abgelehnt:rolle`. Ein `42501` aus der Abfrage selbst
+  heißt: Die Rolle hat keine Rechte auf die Tabelle. **Es gibt nie einen
+  zweiten Versuch ohne Rolle.**
+
+### Ladefehler und Stolperdraht
+
+`identity` ist ein Ladefehler bei `driver: mssql`, bei fehlendem oder
+unbekanntem `mode`, bei unbekanntem `claim`, bei `set_role` ohne `role_prefix`
+(erlaubt: Kleinbuchstaben, Ziffern, Unterstrich, mit Buchstabe beginnend,
+höchstens 32 Zeichen), bei `role_prefix` im Variablen-Modus und für eine
+Team-Datenbank (in v1 nur Firmenbesitz).
+
+Dazu ein **Stolperdraht** über jede (komponierte) Abfrage, ohne Rücksicht auf
+Groß- und Kleinschreibung und über den **ganzen** Text — auch Literale und
+Kommentare (ein Literal kann über `query_to_xml` als Abfrage laufen):
+`set_config`, `set_role`, `current_setting`, `reset`, `discard`, `set` direkt
+gefolgt von `role`, `session`, `local` oder `jnpt`, und Unicode-Escapes
+(`U&'…'`, `U&"…"`). `UPDATE … SET spalte` bleibt erlaubt. ⚠️ **Stolperdraht,
+nicht Linie:** Er schützt vor dem Unfall (eine Abfrage setzt die Kennung um),
+nicht vor jemandem, der eine eigene Funktion mit `set_config` in die Datenbank
+legt. Die Linie sind die Rechte der Datenbank und die beiden Wächter.
+
+Jede Werkzeugbeschreibung einer solchen Integration endet mit dem Satz: „Das
+Ergebnis ist durch die Rechte der Datenbank auf deine Person eingeschränkt."
+
+### Prüfen und Audit
+
+`jnpt database check` hat bei einer Integration mit `identity` die Stufe
+**`quellrechte`**: `[fail]`, wenn der Login die Zeilenrechte umgeht (dann
+würde jeder Aufruf abgelehnt), sonst Warnungen, die nicht blockieren — für
+Tabellen ohne RLS, Tabellen im Besitz des Logins oder einer Präfix-Rolle ohne
+`FORCE`, Views ohne `security_invoker` und (bei `set_role`) Mitgliedschaften
+des Logins außerhalb des Präfixes. Grundlage sind die Tabellen, die der Login
+oder eine seiner Präfix-Rollen lesen darf; eine Personenrolle wird nie beim
+Namen genannt.
+
+Das Audit trägt je Aufruf die Spalte **`quellidentitaet`**:
+`person:session_variable`, `person:set_role`, `technisch+datenfilter`,
+`abgelehnt:keine_person`, `abgelehnt:rolle`, `abgelehnt:umgeht_rls`,
+`abgelehnt:kennung` — nie die Kennung selbst.
 
 ## Netzzugang: die Kundendatenbank steht im Kundennetz
 
@@ -1051,6 +1278,9 @@ Bewusst nicht dabei — jeweils mit Grund, nicht aus Zeitmangel:
   braucht, gehört in eine Datenbank-Funktion oder hinter eine API.
 - **Keine dynamischen Filter-Fragmente.** Ein Filter-Slot ist statisch (siehe
   „Filter-Slots"); pro Konsument verengte Wertebereiche sind ein eigenes Thema.
+- **Rechte je Person nur über PostgreSQL** (`identity`, im Bau):
+  nur Firmenbesitz, kein SQL Server, keine Person aus Läufen, Zeitplänen oder
+  Ketten (Abschnitt „Rechte der Datenbank nutzen").
 - **Keine Schema-Erkundung durch den Agenten.** Kein `list_tables`, kein
   `describe`. Der Agent soll nicht herausfinden, was es gibt — er soll benutzen,
   was ein Mensch freigegeben hat.
@@ -1077,3 +1307,26 @@ Bestandssystem eine brauchbare API hat (dann: [REST-Connector](connector-spec.md
 wird, oder wenn die Auswertung so komplex ist, dass sie in der Datenbank als
 View bzw. in einem eigenen MCP-Server besser lebt. Im Zweifel: kleiner halten
 und nachfragen.
+
+## ETL-Rohstrom (Stufe 1, im Bau)
+
+Für große Datenmengen gibt es neben den Werkzeugen einen eigenen Strom:
+`POST /api/etl/stream` liefert eine **deklarierte lesende Abfrage** dieser Spec
+zeilenweise als NDJSON, ohne Zeilen- und Byte-Deckel der Werkzeuge und **ohne
+Pseudonymisierung**. Zugelassen sind nur Lauf-Tokens von Skript-Läufen, die
+`etl_stream` in `declared_tools` führen und die Abfrage als Werkzeug erreichen
+dürften; nie Agenten-Läufe, nie ein MCP-Werkzeug. Pflicht ist die
+**S2-Freigabe** der Integration (Admin-GUI, Abschnitt „ETL-Strom“, ab Werk aus):
+Ein Mensch bestätigt die Feldliste der Spalten, die sonst pseudonymisiert
+würden. Ändert sich danach eine Abfrage, die Pseudonymisierung, das
+Verbindungsziel oder eine Grenze, ruht die Freigabe; ein rotiertes Passwort lässt
+sie stehen.
+
+Der Strom läuft in derselben read-only-Transaktion wie die Werkzeuge, mit
+`statement_timeout` auf der Restwandzeit; Bytedeckel (ab Werk 10 GiB) und
+Wandzeit (30 min) gelten kumulativ je Lauf-Token. Eine lastabhängige Drossel gibt
+normalen Token-Aufrufen Vorrang. **Die Drossel schützt das Gateway, nicht die
+Quelldatenbank; dafür ist die Obergrenze in MiB/s da.** Höchstens ein Strom läuft
+gleichzeitig; ein zweiter bekommt 429 mit `Retry-After`. **Ein Strom je Anlage
+gilt nur auf einem einzelnen Knoten.** Nur PostgreSQL; SQL Server unterstützt den
+Strom nicht.

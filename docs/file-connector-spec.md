@@ -90,7 +90,7 @@ solche Spec beim Start ab. Empfehlung: Specs unter `/data/files`, Ablagen unter
 
 | Feld | Pflicht | Bedeutung |
 |---|---|---|
-| `name` | ja | Der Instanz-Name. Er ist **Prefix der Werkzeug-Namen UND die Berechtigungs-Identität** und muss über **alle vier** Integrationsarten eindeutig sein. Erlaubt: Kleinbuchstaben, Ziffern, `-`, `_`, beginnend mit einem Buchstaben. **Reserviert** (das Gateway belegt diese Namen selbst — eine Integration dieses Namens verhindert den Start): `memory`, `kartei`, `usecase` (#642), `wissen` (#647), `ablage` (#726), `ping`, `catalog`, `report_problem`. |
+| `name` | ja | Der Instanz-Name. Er ist **Prefix der Werkzeug-Namen UND die Berechtigungs-Identität** und muss über **alle vier** Integrationsarten eindeutig sein. Erlaubt: Kleinbuchstaben, Ziffern, `-`, `_`, beginnend mit einem Buchstaben. **Reserviert** (das Gateway belegt diese Namen selbst — eine Integration dieses Namens verhindert den Start): `memory`, `kartei`, `usecase`, `graph`, `freigabe` und das Präfix `freigabe_`, `teamdoc` und das Präfix `teamdoc_`, `wissen`, `ablage`, `ping`, `catalog`, `report_problem`. Die Liste ist nicht abschließend: Das Gateway sperrt außerdem Namen und Präfixe für seine eigenen Werkzeugfamilien, unter anderem `app`, `skript`, `script`, `agent`, `desktop` sowie die Präfixe `app_`, `skript_`, `script_`, `agent_`, `desktop_`, `freigabe_`, `teamdoc_` und `run_control_`; ein Treffer verhindert den Start bzw. wird bei der Anlage abgewiesen. |
 | `description` | **ja** | Wofür diese Ablage da ist. Sie steht in der Beschreibung BEIDER Werkzeuge — der Agent entscheidet allein daraus, ob er hier richtig ist (die Werkzeug-Namen sind aus dem Typ abgeleitet und sagen nichts über die Ablage). |
 | `type` | ja | Der Datei-Typ: `camt053_v08` oder `ablage` (#723/#728/#729). Er bestimmt **Parser UND Werkzeug-Satz** (s. u.). `write_target` lädt seit #729 als ALIAS von `ablage` (überholt, neue Specs schreiben `ablage`). |
 | `dir` | ja | Das **absolute** Ablage-Verzeichnis. Kein relativer Pfad (er löste je nach Aufrufer anders auf), kein `..`, keine Steuerzeichen. |
@@ -252,6 +252,7 @@ einzige Datei.
   "text": "Rechnung 2026-0042 …",
   "truncated": false,
   "text_bytes_total": 4711,
+  "hidden_text_count": 0,
   "note": "",
   "embedded": []
 }
@@ -272,6 +273,27 @@ Etikett. Es gibt **bewusst keine Tabellen-Sicht** (Zeilen/Spalten als
 Struktur, Spaltenfilter): Eine KI parst CSV-Text zuverlässig selbst, und eine
 Struktur-Sicht wird erst gebaut, wenn ein konkreter Use Case sie tatsächlich
 braucht (nichts auf Vorrat).
+
+**Versteckter Text (Stufe 1, gebaut, unveröffentlicht).** PDF und DOCX
+behalten erkannten versteckten Text mit `[versteckter Text: …]`. Benachbarte
+versteckte Läufe bilden einen Abschnitt; `hidden_text_count` zählt die
+Abschnitte im gelesenen Teil (auch 0 steht im Ergebnis). Der feste
+Injection-Rahmensatz in `hinweis` bleibt und erhält einen Zusatz mit
+Seite bzw. Absatz und Gründen. Dokumenttext steht ausschließlich in `text`.
+Dasselbe gilt für `read_attachment` auf Mailanhängen.
+
+DOCX: direkte Laufeigenschaften `w:vanish`, explizites Weiß, gleiche
+explizite Lauf-/Absatzschattierung bzw. Dokument-Hintergrundfarbe, `w:sz < 4`
+(unter 2 pt). PDF: `Tr 3`, Textursprung außerhalb der geerbten CropBox
+(sonst MediaBox), Schrift unter 2 pt, Weiß in DeviceRGB/DeviceGray über
+`rg`/`RG`/`g`/`G` bzw. explizite Device-Farbräume mit `cs`/`CS` und
+`sc`/`scn`/`SC`/`SCN`. Gründe: `vanish`, `weiß`, `Hintergrund`, `winzig`,
+`unsichtbar`, `außerhalb`. Es ist eine Kennzeichnung, keine Sperre und keine
+vollständige Sichtbarkeitsprüfung. Andere PDF-Farbräume, Hintergrundvergleich,
+Transparenz, Überdeckungen und Glyphenumrisse sowie DOCX-Styles, Theme-/Auto-
+Farben und berechnete Hintergründe bleiben Grenzen. Kein Renderer, keine OCR.
+Die vorhandenen Deckel gelten einschließlich Marker; bei Kürzung darf auch
+ein Marker abgeschnitten sein, der Zähler beschreibt dann nicht die ganze Datei.
 
 **Office lesen: docx, xlsx, pptx (heute).** `read_file` liefert den
 Text von Word-, Excel- und PowerPoint-Dateien — `kind` ist dann `docx`,
@@ -721,7 +743,7 @@ und `privacy.read[].field` adressiert sie wörtlich.
 **Für `type: ablage`** ist der Schlüsselsatz der von `read_file` gezeigten
 Ergebnisform oben (`hinweis`, `name`, `mime`, `declared_mime`, `kind`, `text`,
 `note` — nur die STRING-Felder sind deklarierbar): `bytes`, `truncated`,
-`text_bytes_total` und `embedded` fallen heraus, weil die Tokenisierung
+`text_bytes_total`, `hidden_text_count` und `embedded` fallen heraus, weil die Tokenisierung
 ausschließlich nicht-leere Zeichenketten anfasst.
 
 **Je Auszug (`auszuege[]`):**
@@ -1023,7 +1045,9 @@ Berechtigungs-Achse**:
   **pseudonymisierte** Fassung der Antwort im Inhalt — `get_file`-Bytes nur als
   Typ, Größe und SHA-256.
 - **`report_problem`** kennt die Integration: Ein Agent kann ein Problem mit
-  dieser Ablage melden.
+  dieser Ablage melden. `integration` nimmt nur Integrationen; für Karteien,
+  Memory und andere Kernwerkzeuge bleibt es leer, der Werkzeugname gehört
+  in `affected_tool`.
 - Das **`catalog`**-Werkzeug nennt sie mit Typ „File directory" und ihrem Zweck
   aus `description` — sofern der Zugang mindestens ein Werkzeug davon sehen darf.
 
@@ -1490,3 +1514,13 @@ wenn die Daten in einer Datenbank stehen (dann:
 [Datenbank](db-connector-spec.md)), oder wenn es wirklich um
 Dokumenten-Verwaltung geht (dann: ein DMS, nicht ein Gateway). Im Zweifel:
 kleiner halten und nachfragen.
+
+### Medienabruf für menschliche Freigaben
+
+Die Freigabeansicht nutzt denselben get_file-Leseweg ohne KI-Token: ausschließlich
+SSO-Freigeber, offener Auftrag, aktive gebundene Ablage derselben Ebene und
+SHA-256 über den einzigen Ausgabepuffer. Pseudonymisierte Ablagen liefern auch
+dort nie Bytes. PNG/JPEG/GIF inline, PDF als Download; Video/WebP/SVG/HTML nicht.
+Der Deckel gilt auch bei Dateiwachstum nach der Größenprüfung. Erfolgreiche
+Medienabrufe bleiben unauditiert, nur SHA-Abweichungen sind personenfreie
+Systemereignisse. Der normale KI-Abruf mit `<ablage>:get_file` bleibt unverändert.

@@ -49,6 +49,15 @@ die Site; deshalb steht die Site-Adresse fest in der Spec und ist kein
 Werkzeug-Parameter. Wer eine zweite Site anbinden will, legt eine **zweite
 Integration** an: eigene Spec-Kopie, eigenes Vault-Credential, eigener Grant.
 
+**Die Bindung hat zwei Teile (seit Vorlage 3.0.0).** Erstens laufen alle vier Werkzeuge unter
+`/v1.0/sites/<site_id>/…`, auch `list_children` und `get_item`; bis 2.0.0 gingen diese beiden über
+`/v1.0/drives/{drive_id}/…` und nahmen jede `drive_id`, die der Aufrufer nannte. Zweitens, und das ist die
+Grenze, auf die Sie sich verlassen: der `Sites.Selected`-Grant der App. **Je Site eine eigene App-Registrierung**,
+nie zwei Site-Grants an einer App. Die Vorlage sagt nicht „keine andere Site erreichbar“. Offen und live noch nicht
+belegt (Probelauf): ob Graph die Pfadform `/sites/{id}/drives/{drive_id}/items/…` annimmt (die
+driveItem-Seiten nennen sie nicht wörtlich) und ob Graph die `drive_id` einer anderen Site unter dieser Site mit
+404 oder 403 ablehnt. Liefert Graph dort 200, bleibt „je Site eine eigene App“ die einzige Grenze.
+
 ## 2. Die Einrichtung in fünf Schritten
 
 1. **Eigene** App-Registrierung in Microsoft Entra ID anlegen

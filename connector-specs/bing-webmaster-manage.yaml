@@ -1,0 +1,124 @@
+# Bing Webmaster and IndexNow submit handles for a website team. A separate template, so the
+# read template bing-webmaster keeps its surface and a whole-integration grant adds no write.
+# Stufe 1 — gebaut, noch nicht live abgenommen. No Bing key in JanuaPort.
+# Configure as corp integration. Internal target_address approval required.
+# Each write tool carries the tool-exact permission; a connector-wide scope grants no write.
+# Audit depth MUST be metadaten for SSO and token callers before activation.
+# All declared parameters are redacted; higher audit depth stores declared input.
+# Credential bing-webmaster is the same in both Bing templates;
+# its value equals the runtime-key of the plugin place plugin-bing-webmaster.
+# The service applies the daily cap (20 write attempts per route and UTC day), the host
+# allowlist from its configuration and the Bing quota; see bing-webmaster/README.md in
+# januaport-plugins.
+# Official contracts: learn.microsoft.com/en-us/dotnet/api/microsoft.bing.webmaster.api.interfaces.iwebmasterapi
+# (SubmitUrlBatch, SubmitFeed) and indexnow.org/documentation
+name: bing-webmaster-manage
+version: "1.0.0"
+description: >
+  Bing Webmaster and IndexNow submit handles for an operator approved public website: report
+  single URLs or a sitemap to Bing, and report URLs through IndexNow. The site, the approved
+  hosts and the IndexNow key come from the operator configuration, not from a parameter.
+  A submission reports addresses; it does not guarantee crawling or indexing. Removing or
+  blocking addresses is not part of this template, and the AI Performance report of Bing
+  Webmaster Tools has no API.
+base_url: http://bing-webmaster:8092
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  credential: bing-webmaster
+timeout: 25s
+min_interval: 500ms
+redact_params: [urls, sitemap_url, dry_run]
+tools:
+  - name: submit_urls
+    description: >
+      Reports URLs of the configured website to Bing (SubmitUrlBatch). Submitting asks Bing to
+      look at the addresses; it does not guarantee crawling or indexing. A call takes up to 100
+      URLs, each on an approved host. Before the call the service reads the daily quota Bing
+      reports and submits no more URLs than that quota allows. The answer carries the state
+      applied or preview, the submitted URLs and quota_before. With dry_run true the service
+      validates the URLs and returns the preview without calling Bing. The service allows 20
+      write attempts per day and route; failed attempts count, previews are not counted.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "bing-webmaster-manage:submit_urls".
+    write: true
+    params:
+      - name: urls
+        type: string
+        required: true
+        description: >
+          Absolute https URLs on approved hosts, separated by commas, up to 100, each without
+          query, fragment, port or credentials.
+      - name: dry_run
+        type: boolean
+        description: Optional. true returns the preview without calling Bing. Default false.
+    request:
+      method: POST
+      path: /v1/bing/submit_urls
+      encoding: json
+      body_json:
+        urls: "{urls}"
+        dry_run: "{dry_run}"
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, submitted_count: submitted_count, urls: urls, quota_before: quota_before, vendor_status: vendor_status, fetched_at: fetched_at}"
+  - name: submit_sitemap
+    description: >
+      Reports a sitemap URL of the configured website to Bing (SubmitFeed). Submitting
+      registers the sitemap; it does not guarantee crawling or indexing. The answer carries the
+      state applied or preview and the sitemap URL as target. With dry_run true the service
+      validates the URL and returns the preview without calling Bing. The service allows 20
+      write attempts per day and route; failed attempts count, previews are not counted.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "bing-webmaster-manage:submit_sitemap".
+    write: true
+    params:
+      - name: sitemap_url
+        type: string
+        required: true
+        description: >
+          Absolute https URL of the sitemap on an approved host, ending in .xml, without query,
+          fragment, port or credentials.
+      - name: dry_run
+        type: boolean
+        description: Optional. true returns the preview without calling Bing. Default false.
+    request:
+      method: POST
+      path: /v1/bing/submit_sitemap
+      encoding: json
+      body_json:
+        sitemap_url: "{sitemap_url}"
+        dry_run: "{dry_run}"
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, submitted_count: submitted_count, urls: urls, quota_before: quota_before, vendor_status: vendor_status, fetched_at: fetched_at}"
+  - name: indexnow_submit_urls
+    description: >
+      Reports URLs of the configured website through IndexNow (api.indexnow.org), which passes
+      them to the participating search engines. Submitting does not guarantee crawling or
+      indexing. Up to 100 URLs per call, all on the host of the IndexNow key file. IndexNow
+      answers 200 or 202; 202 means the key check is still pending and is reported as
+      vendor_status. The answer is not_configured when the operator configured no IndexNow key,
+      and no call is made. With dry_run true the service validates the URLs and returns the
+      preview without calling IndexNow. The service allows 20 write attempts per day and route;
+      failed attempts count, previews are not counted.
+      This is a WRITE action. It is annotated as such, so your client may ask the user;
+      JanuaPort itself never asks. It needs the tool-exact permission
+      "bing-webmaster-manage:indexnow_submit_urls".
+    write: true
+    params:
+      - name: urls
+        type: string
+        required: true
+        description: >
+          Absolute https URLs on the host of the IndexNow key file, separated by commas, up to
+          100, each without query, fragment, port or credentials.
+      - name: dry_run
+        type: boolean
+        description: Optional. true returns the preview without calling IndexNow. Default false.
+    request:
+      method: POST
+      path: /v1/indexnow/submit_urls
+      encoding: json
+      body_json:
+        urls: "{urls}"
+        dry_run: "{dry_run}"
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, dry_run: dry_run, target: target, submitted_count: submitted_count, urls: urls, quota_before: quota_before, vendor_status: vendor_status, fetched_at: fetched_at}"

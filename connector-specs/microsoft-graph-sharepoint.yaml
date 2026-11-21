@@ -5,7 +5,7 @@
 # API:        https://graph.microsoft.com
 # Doku:       Site holen (Adressierung {hostname}:/{server-relative-path})
 #             https://learn.microsoft.com/en-us/graph/api/site-get?view=graph-rest-1.0
-#             Bibliotheken (Drives) einer Site auflisten
+#             Bibliotheken (Drives) einer Site auflisten (GET /sites/{siteId}/drives)
 #             https://learn.microsoft.com/en-us/graph/api/drive-list?view=graph-rest-1.0
 #             Ordnerinhalt auflisten
 #             https://learn.microsoft.com/en-us/graph/api/driveitem-list-children?view=graph-rest-1.0
@@ -30,10 +30,30 @@
 # Die Pfadmarken bleiben stehen. Das CLIENT SECRET steht NIE hier, sondern nur
 # im Vault unter dem Namen "microsoft-graph-sharepoint".
 #
-# ⚠️ EINE INTEGRATION = EINE SITE. Sites.Selected begrenzt die Site; sie ist
-# ein fester Anlagenwert, kein Werkzeug-Parameter. Zweite Site = zweite
-# Integration mit eigenem Credential und Grant. Nur die ID-Form ohne / passt
-# zum segment-Vertrag; die Pfade haben keinen abschließenden Doppelpunkt.
+# ⚠️ EINE INTEGRATION = EINE SITE. Die Site ist ein fester Anlagenwert, kein
+# Werkzeug-Parameter. Zweite Site = zweite Integration mit eigenem Credential
+# und Grant. Nur die ID-Form ohne / passt zum segment-Vertrag; die Pfade haben
+# keinen abschließenden Doppelpunkt. Die Bindung hat zwei Teile, und nur der
+# zweite ist eine Grenze, auf die man sich verlassen darf:
+#   1. PFADBINDUNG (seit 3.0.0): ALLE vier Werkzeuge laufen unter
+#      /v1.0/sites/{{instance.site_id}}/…, auch list_children und get_item
+#      (/v1.0/sites/{{instance.site_id}}/drives/{drive_id}/items/…). Bis 2.0.0
+#      gingen diese beiden über /v1.0/drives/{drive_id}/… und nahmen jede
+#      drive_id an, die der Aufrufer nannte (Audit). Die Pfadform steht so
+#      NICHT wörtlich auf den driveItem-Seiten (driveitem-get, -list-children):
+#      Sie nennen dort für Sites nur /sites/{site-id}/drive/items/… (Einzahl,
+#      nur die Standardbibliothek) und /drives/{drive-id}/items/…. Belegt ist
+#      GET /sites/{siteId}/drives (drive-list) und die Navigation Site → Drive →
+#      Item, über die auch die Graph-SDKs ihre Pfade bauen.
+#   2. DIE GRENZE IST DER Sites.Selected-GRANT DER APP: je Site eine eigene
+#      App-Registrierung, nie zwei Site-Grants an einer App. Eine Zusage „nur
+#      diese Site ist erreichbar“ gibt die Vorlage nicht.
+# OFFENE LIVE-FRAGEN (Probelauf; bis dahin keine Zusage):
+#   (a) Nimmt Graph die Form /sites/{id}/drives/{drive_id}/items/… live an?
+#   (b) Gegenprobe zur Pfadbindung: App mit ZWEI Site-Grants, die drive_id von
+#       Site B gegen die Integration von Site A. Erwartet wird 404 oder 403.
+#       Liefert Graph 200, ist „je Site eine eigene App“ die einzige Grenze und
+#       bleibt Pflicht.
 #
 # ⚠️ OHNE PER-SITE-GRANT IST DIE EINRICHTUNG NICHT FERTIG — und das ist hier
 # nicht die Ausnahme, sondern das Prinzip. `Sites.Read.All` (Anwendung) wäre
@@ -115,7 +135,7 @@
 
 name: microsoft-graph-sharepoint
 # Fassung dieser Vorlage (Story #427) — siehe demo-erp.yaml für die Bedeutung.
-version: "2.0.0"
+version: "3.0.0"
 description: >
   SharePoint document libraries of ONE site via Microsoft Graph: list the
   libraries, browse folders and read item METADATA. Read-only and app-only;
@@ -158,8 +178,9 @@ tools:
       Returns the ONE SharePoint site this integration is bound to: id,
       displayName, name, webUrl and the creation / last-modified timestamps.
       The site address is fixed in the connector configuration — there is no
-      parameter for it, and no other site of the tenant can be reached through
-      this integration.
+      parameter for it. The other tools address their libraries below this
+      site as well; the limit that counts is the Sites.Selected grant of the
+      application (one application per site).
       Use it to get the site's webUrl for a human, and as the first call when
       something looks wrong: it is also the probe call of the operator's
       connector check. An HTTP 403 here does NOT mean a broken credential — it
@@ -225,6 +246,8 @@ tools:
       $skiptoken query parameter out of that URL and pass it as skiptoken to get
       the next page; there is no numeric page or offset for this collection, and
       this tool never follows the link by itself.
+      The library is addressed below the site of this integration; the limit
+      that counts is the Sites.Selected grant of the application.
     params:
       - name: drive_id
         description: >
@@ -257,7 +280,7 @@ tools:
         type: string
     request:
       method: GET
-      path: /v1.0/drives/{drive_id}/items/{folder_id}/children
+      path: "/v1.0/sites/{{instance.site_id}}/drives/{drive_id}/items/{folder_id}/children"
       query:
         # Fester $select: genau die Felder, die der Tool-Text benennt.
         # `@microsoft.graph.downloadUrl` steht hier bewusst NICHT (s. Kopf).
@@ -291,6 +314,8 @@ tools:
       and it deliberately never returns a download link. What it answers is
       "this item exists, it is this big, it changed at this time, and a human
       finds it here" — the webUrl opens it in SharePoint after sign-in.
+      The library is addressed below the site of this integration; the limit
+      that counts is the Sites.Selected grant of the application.
     params:
       - name: drive_id
         description: >
@@ -307,7 +332,7 @@ tools:
         required: true
     request:
       method: GET
-      path: /v1.0/drives/{drive_id}/items/{item_id}
+      path: "/v1.0/sites/{{instance.site_id}}/drives/{drive_id}/items/{item_id}"
       query:
         - name: "$select"
           value: "id,name,size,file,folder,lastModifiedDateTime,parentReference,webUrl"

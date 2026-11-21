@@ -1,25 +1,27 @@
 # LinkedIn company-page actions from the operator's editorial plan, after human hash approval.
 # Separate from linkedin-seite: read grants retain their read-only surface with one Bridge key.
-# Stufe 1 — gebaut, noch nicht live abgenommen. No LinkedIn identity in JanuaPort.
+# Stufe 2 — gebaut, noch nicht live abgenommen. No LinkedIn identity in JanuaPort.
 # Configure as corp integration. Internal target_address approval required.
 # Each write tool needs its tool-exact permission; a connector-wide grant adds no write.
 # Audit depth MUST be metadaten for SSO and token callers before activation.
 # All declared parameters are redacted; higher audit depth stores declared input.
 # Credential linkedin-seite is shared with the read template. Its value equals the
 # Bridge runtime-key of the place plugin-linkedin-seite; OAuth stays in the service.
-# The service executes entries from redaktionsplan only after a human approved the matching
-# hash in redaktion_freigabe. It counts 5 write actions and 45 LinkedIn HTTP attempts per UTC day.
-# Contract and setup: linkedin-seite/README.md in januaport-plugins (service 0.2.0).
+# JanuaPort requests and binds human SSO approval to its fresh server-side preview.
+# X-Jnpt-Freigabe carries hash=freigabe:v2:sha256:<hex>; redaktion_freigabe is superseded. It counts 5 write actions and 45 LinkedIn HTTP attempts per UTC day.
+# Gateway contract built; plugin 0.3.0 aligns with the preview example; live acceptance pending.
+# Setup: linkedin-seite/README.md in januaport-plugins, service 0.3.0.
+# Executor timeout is 120 s (runtime ceiling); a synchronous service job may take up to 25 min.
 # Official LinkedIn contracts, version 202610:
 # https://learn.microsoft.com/linkedin/marketing/community-management/shares/posts-api?view=li-lms-2026-10
 # https://learn.microsoft.com/linkedin/marketing/community-management/shares/comments-api?view=li-lms-2026-10
 name: linkedin-seite-manage
-version: "1.0.0"
+version: "3.0.0"
 description: >
   LinkedIn company-page editorial actions through the operator configured linkedin-seite service.
   Preview an entry from redaktionsplan, then publish, edit or delete its post or create a comment.
-  Text, media, polls and target URNs come from the entry. Human approval of the matching hash in
-  redaktion_freigabe is the service's execution condition. The separate linkedin-seite template
+  Text, media, polls and target URNs come from the entry. JanuaPort binds human SSO approval
+  to a server-side preview; freigabe_anfordern returns the human decision path. The separate linkedin-seite template
   provides statistics. This template belongs to a corp integration and the editorial token.
 base_url: http://linkedin-seite:8092
 
@@ -28,7 +30,7 @@ auth:
   template: "Bearer {{credential}}"
   credential: linkedin-seite
 
-timeout: 25s
+timeout: 120s
 min_interval: 500ms
 redact_params: [eintrag_id, aktion]
 
@@ -37,9 +39,9 @@ tools:
     description: >
       Shows the entry's approval content for one action: post or comment text, format, poll,
       target post_urn, document title and media with filename, kind, byte size and sha256.
-      hash identifies the exact content and media bytes; freigegeben states whether a human
-      approved that hash for this entry and action in redaktion_freigabe. The preview reads
-      redaktionsplan, approval records and media through the gateway, without a LinkedIn call
+      The canonical action, ziel_urn, text, ordered media names and sha256, and poll bind the hash.
+      A human decides the JanuaPort request returned by freigabe_anfordern. The preview reads
+      redaktionsplan and media through the gateway, without a LinkedIn call
       or a request body. The service allows 10 previews per minute, one at a time.
     params:
       - name: eintrag_id
@@ -59,21 +61,26 @@ tools:
           value: "{eintrag_id}"
         - name: aktion
           value: "{aktion}"
-    response: "{eintrag_id: eintrag_id, aktion: aktion, format: format, hash: hash, freigegeben: freigegeben, post_text: post_text, post_urn: post_urn, kommentar_text: kommentar_text, umfrage: umfrage.{frage: frage, antworten: antworten, dauer: dauer}, dokument_titel: dokument_titel, medien: medien[].{datei: datei, art: art, bytes: bytes, sha256: sha256}, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
+    response: "{text: text, ziel_urn: ziel_urn, eintrag_id: eintrag_id, aktion: aktion, format: format, hash: hash, post_text: post_text, post_urn: post_urn, kommentar_text: kommentar_text, umfrage: umfrage.{frage: frage, antworten: antworten, dauer: dauer}, dokument_titel: dokument_titel, medien: medien[].{name: name, datei: datei, art: art, bytes: bytes, sha256: sha256}, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
   - name: create_post
     description: >
       Publishes the entry as a company-page post: text, image, multiple images, document, video or poll.
       Only eintrag_id is sent; text, media, poll and target URN come from redaktionsplan.
-      The service executes the action only when a human approved the matching hash for this
-      entry and action (posten) in redaktion_freigabe. vorschau shows the approval content
+      JanuaPort executes after a human approved the matching hash for this entry and action (posten).
+      Request it with freigabe_anfordern; its path leads the human to the SSO decision. vorschau shows the approval content
       and hash without calling LinkedIn. The service counts 5 write actions and 45 LinkedIn HTTP
-      attempts per UTC day across the write routes. A long job answers HTTP 202 with state
-      in_arbeit after 20 seconds; the same call later returns its state or result. Completed
-      results are retained in the running service process; wiederholt marks a repeated result.
-      This is a WRITE action. It is annotated as such, so your client may ask the user;
-      JanuaPort itself never asks. It needs the tool-exact permission
+      attempts per UTC day across the write routes. The service waits synchronously for up to
+      25 minutes; this integration times out after 120 seconds. A timeout after sending leaves
+      the request unklar for human investigation.
+      ausgefuehrt: true confirms success; HTTP 200 with nicht_ausgefuehrt: true allows reuse before any LinkedIn write.
+      This is a WRITE action. JanuaPort sends it only after matching human SSO approval.
+      It needs the tool-exact permission
       "linkedin-seite-manage:create_post".
     write: true
+    freigabe:
+      vorschau: vorschau
+      schluessel: [eintrag_id]
+      medien_ablage: redaktion-medien
     params:
       - name: eintrag_id
         type: string
@@ -85,21 +92,25 @@ tools:
       encoding: json
       body_json:
         eintrag_id: "{eintrag_id}"
-    response: "{aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, video_urn: video_urn, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
+    response: "{ausgefuehrt: ausgefuehrt, nicht_ausgefuehrt: nicht_ausgefuehrt, aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, video_urn: video_urn, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
   - name: edit_post
     description: >
       Updates the text of the entry's existing company-page post.
       Only eintrag_id is sent; text, media, poll and target URN come from redaktionsplan.
-      The service executes the action only when a human approved the matching hash for this
-      entry and action (bearbeiten) in redaktion_freigabe. vorschau shows the approval content
+      JanuaPort executes after a human approved the matching hash for this entry and action (bearbeiten).
+      Request it with freigabe_anfordern; its path leads the human to the SSO decision. vorschau shows the approval content
       and hash without calling LinkedIn. The service counts 5 write actions and 45 LinkedIn HTTP
-      attempts per UTC day across the write routes. A long job answers HTTP 202 with state
-      in_arbeit after 20 seconds; the same call later returns its state or result. Completed
-      results are retained in the running service process; wiederholt marks a repeated result.
-      This is a WRITE action. It is annotated as such, so your client may ask the user;
-      JanuaPort itself never asks. It needs the tool-exact permission
+      attempts per UTC day across the write routes. The service waits synchronously for up to
+      25 minutes; this integration times out after 120 seconds. A timeout after sending leaves
+      the request unklar for human investigation.
+      ausgefuehrt: true confirms success; HTTP 200 with nicht_ausgefuehrt: true allows reuse before any LinkedIn write.
+      This is a WRITE action. JanuaPort sends it only after matching human SSO approval.
+      It needs the tool-exact permission
       "linkedin-seite-manage:edit_post".
     write: true
+    freigabe:
+      vorschau: vorschau
+      schluessel: [eintrag_id]
     params:
       - name: eintrag_id
         type: string
@@ -111,21 +122,25 @@ tools:
       encoding: json
       body_json:
         eintrag_id: "{eintrag_id}"
-    response: "{aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
+    response: "{ausgefuehrt: ausgefuehrt, nicht_ausgefuehrt: nicht_ausgefuehrt, aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
   - name: delete_post
     description: >
       Deletes the company-page post identified by the entry's post_urn.
       Only eintrag_id is sent; text, media, poll and target URN come from redaktionsplan.
-      The service executes the action only when a human approved the matching hash for this
-      entry and action (loeschen) in redaktion_freigabe. vorschau shows the approval content
+      JanuaPort executes after a human approved the matching hash for this entry and action (loeschen).
+      Request it with freigabe_anfordern; its path leads the human to the SSO decision. vorschau shows the approval content
       and hash without calling LinkedIn. The service counts 5 write actions and 45 LinkedIn HTTP
-      attempts per UTC day across the write routes. A long job answers HTTP 202 with state
-      in_arbeit after 20 seconds; the same call later returns its state or result. Completed
-      results are retained in the running service process; wiederholt marks a repeated result.
-      This is a WRITE action. It is annotated as such, so your client may ask the user;
-      JanuaPort itself never asks. It needs the tool-exact permission
+      attempts per UTC day across the write routes. The service waits synchronously for up to
+      25 minutes; this integration times out after 120 seconds. A timeout after sending leaves
+      the request unklar for human investigation.
+      ausgefuehrt: true confirms success; HTTP 200 with nicht_ausgefuehrt: true allows reuse before any LinkedIn write.
+      This is a WRITE action. JanuaPort sends it only after matching human SSO approval.
+      It needs the tool-exact permission
       "linkedin-seite-manage:delete_post".
     write: true
+    freigabe:
+      vorschau: vorschau
+      schluessel: [eintrag_id]
     params:
       - name: eintrag_id
         type: string
@@ -137,21 +152,25 @@ tools:
       encoding: json
       body_json:
         eintrag_id: "{eintrag_id}"
-    response: "{aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
+    response: "{ausgefuehrt: ausgefuehrt, nicht_ausgefuehrt: nicht_ausgefuehrt, aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
   - name: create_comment
     description: >
       Creates a company-page comment from kommentar_text on the post identified by the entry's post_urn.
       Only eintrag_id is sent; text, media, poll and target URN come from redaktionsplan.
-      The service executes the action only when a human approved the matching hash for this
-      entry and action (kommentar) in redaktion_freigabe. vorschau shows the approval content
+      JanuaPort executes after a human approved the matching hash for this entry and action (kommentar).
+      Request it with freigabe_anfordern; its path leads the human to the SSO decision. vorschau shows the approval content
       and hash without calling LinkedIn. The service counts 5 write actions and 45 LinkedIn HTTP
-      attempts per UTC day across the write routes. A long job answers HTTP 202 with state
-      in_arbeit after 20 seconds; the same call later returns its state or result. Completed
-      results are retained in the running service process; wiederholt marks a repeated result.
-      This is a WRITE action. It is annotated as such, so your client may ask the user;
-      JanuaPort itself never asks. It needs the tool-exact permission
+      attempts per UTC day across the write routes. The service waits synchronously for up to
+      25 minutes; this integration times out after 120 seconds. A timeout after sending leaves
+      the request unklar for human investigation.
+      ausgefuehrt: true confirms success; HTTP 200 with nicht_ausgefuehrt: true allows reuse before any LinkedIn write.
+      This is a WRITE action. JanuaPort sends it only after matching human SSO approval.
+      It needs the tool-exact permission
       "linkedin-seite-manage:create_comment".
     write: true
+    freigabe:
+      vorschau: vorschau
+      schluessel: [eintrag_id]
     params:
       - name: eintrag_id
         type: string
@@ -163,4 +182,4 @@ tools:
       encoding: json
       body_json:
         eintrag_id: "{eintrag_id}"
-    response: "{aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, kommentar_id: kommentar_id, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"
+    response: "{ausgefuehrt: ausgefuehrt, nicht_ausgefuehrt: nicht_ausgefuehrt, aktion: aktion, eintrag_id: eintrag_id, hash: hash, format: format, state: state, post_urn: post_urn, kommentar_id: kommentar_id, bytes: bytes, wiederholt: wiederholt, warnung: warnung, ablaufdatum: ablaufdatum, warnung_schreiben: warnung_schreiben, ablaufdatum_schreiben: ablaufdatum_schreiben}"

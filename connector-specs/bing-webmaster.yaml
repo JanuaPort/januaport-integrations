@@ -1,0 +1,66 @@
+# Fixed read-only routes from the private bing-webmaster service.
+# Stufe 1 — gebaut, noch nicht live abgenommen. The Bing API key lives only in the service
+# (the Bing API takes it as ?apikey= in the URL); no Bing key in JanuaPort.
+# Configure as corp integration. Internal target_address approval required.
+# Audit depth MUST be metadaten for SSO and token callers before activation.
+# All declared parameters are redacted; higher audit depth stores declared input.
+# Credential bing-webmaster is the same in both Bing templates;
+# its value equals the runtime-key of the plugin place plugin-bing-webmaster.
+# Official contract: learn.microsoft.com/en-us/dotnet/api/microsoft.bing.webmaster.api.interfaces.iwebmasterapi
+name: bing-webmaster
+version: "1.0.0"
+description: >
+  Bing Webmaster handles for an operator approved public website: index status of single pages,
+  the registered sitemaps and the URL submission quota. The site and the approved hosts come
+  from the operator configuration, not from a parameter. Read-only; the submit tools are in
+  the template bing-webmaster-manage. Page statistics and search terms are not part of this
+  template, and the AI Performance report of Bing Webmaster Tools has no API.
+base_url: http://bing-webmaster:8092
+auth:
+  header: Authorization
+  template: "Bearer {{credential}}"
+  credential: bing-webmaster
+timeout: 25s
+min_interval: 500ms
+redact_params: [url]
+tools:
+  - name: url_info
+    description: >
+      Reads the Bing index record of one public page of the configured website: discovery date,
+      last crawl time (UTC), HTTP status and document size at the last crawl, and whether Bing
+      counts the URL as a page. The answer is no_data when Bing holds no record for the URL. The
+      values are the record Bing keeps; a recent crawl date does not state that the page is
+      indexed or shown in search results. Read-only.
+    params:
+      - name: url
+        type: string
+        required: true
+        description: >
+          Absolute https URL of a page on an approved host, without query, fragment, port or
+          credentials, for example https://www.example.test/atas.
+    request:
+      method: GET
+      path: /v1/bing/url_info
+      query:
+        - name: url
+          value: "{url}"
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, item: item, fetched_at: fetched_at}"
+  - name: sitemaps
+    description: >
+      Lists the sitemaps and feeds Bing has registered for the configured website: URL, type,
+      status, number of URLs, file size, submitted and last crawled time (UTC). Up to 100
+      entries. Read-only.
+    request:
+      method: GET
+      path: /v1/bing/sitemaps
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, items: items, quality: quality, fetched_at: fetched_at}"
+  - name: submission_quota
+    description: >
+      Reads the URL submission quota Bing reports for the configured website: daily_quota and
+      monthly_quota as Bing returns them. Submissions through bing-webmaster-manage stay within
+      the daily value. Read-only.
+    check: true
+    request:
+      method: GET
+      path: /v1/bing/submission_quota
+    response: "{schema_version: schema_version, source: source, operation: operation, state: state, item: item, fetched_at: fetched_at}"
