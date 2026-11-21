@@ -1,24 +1,32 @@
 # Odoo 19 über die External JSON-2 API — Kontakte, CRM-Pipeline, Projekte,
-# Aufgaben, Stundenzettel, Verträge und interne Notizen (Chatter) lesen;
-# Stunden buchen, Aufgabe anlegen, Lead-Stufe setzen und interne Notiz
-# an einer Aufgabe schreiben.
+# Aufgaben, Stundenzettel, Verträge und interne Notizen (Chatter) LESEN, Leads
+# ZÄHLEN; Stunden buchen, Aufgabe anlegen, Lead-Stufe setzen, interne Notiz an
+# einer Aufgabe und eine feste Status-Notiz an einem Lead SCHREIBEN (v1-Schnitt, geschnitten gegen
+# eine echte Odoo-19.0-Community-Instanz).
 #
-# API: POST /json/2/<model>/<method>, JSON-Body mit den Methoden-Parametern
-# Doku: External JSON-2 API (Envelope, Header, Fehlerobjekt, API-Schlüssel,
-# Datenbank-Header, Transaktion)
-# https://www.odoo.com/documentation/19.0/developer/reference/external_api.html
-# (Quelltext: github.com/odoo/documentation, Zweig 19.0,
-# content/developer/reference/external_api.rst — geprüft 28.09.2026)
-# ORM-Methoden create / write / fields_get
-# https://www.odoo.com/documentation/19.0/developer/reference/backend/orm.html
-# search_read steht NICHT in der gerenderten ORM-Referenz; Signatur
-# search_read(domain, fields, offset, limit, order) und der Dekorator
-# @api.readonly stehen im Quelltext github.com/odoo/odoo, Zweig 19.0,
-# odoo/orm/models.py. create(vals_list) ist @api.model_create_multi,
-# write(vals) läuft auf `ids`. res.users.context_get ist @api.model
-# (odoo/addons/base/models/res_users.py).
-# Anleitung: (Produkt-Doku, nicht öffentlich) (Bot-Nutzer, Rechtegruppe, API-Schlüssel mit
-# Ablauf, Credential in den Vault, Docker-Netz)
+# API:        POST /json/2/<model>/<method>, JSON-Body mit den Methoden-Parametern
+# Doku:       External JSON-2 API (Envelope, Header, Fehlerobjekt, API-Schlüssel,
+#             Datenbank-Header, Transaktion)
+#             https://www.odoo.com/documentation/19.0/developer/reference/external_api.html
+#             (Quelltext: github.com/odoo/documentation, Zweig 19.0,
+#             content/developer/reference/external_api.rst — geprüft 28.09.2026)
+#             ORM-Methoden create / write / fields_get
+#             https://www.odoo.com/documentation/19.0/developer/reference/backend/orm.html
+#             search_read steht NICHT in der gerenderten ORM-Referenz; Signatur
+#             search_read(domain, fields, offset, limit, order) und der Dekorator
+#             @api.readonly stehen im Quelltext github.com/odoo/odoo, Zweig 19.0,
+#             odoo/orm/models.py. create(vals_list) ist @api.model_create_multi,
+#             write(vals) läuft auf `ids`. res.users.context_get ist @api.model
+#             (odoo/addons/base/models/res_users.py).
+#             web_search_read(domain, specification, offset, limit, order,
+#             count_limit) ist @api.model @api.readonly (count_leads):
+#             github.com/odoo/odoo, Zweig 19.0, addons/web/models/models.py;
+#             über JSON-2 aufrufbar, weil öffentlich (get_public_method) und
+#             readonly (addons/rpc/controllers/json2.py). Die Antwort ist
+#             {length, records}: length ist die Gesamtzahl der Treffer, records
+#             die Seite (hier höchstens 50).
+# Anleitung:  (Produkt-Doku, nicht öffentlich) (Bot-Nutzer, Rechtegruppe, API-Schlüssel mit
+#             Ablauf, Credential in den Vault, Docker-Netz)
 #
 # ⚠️ DIESE DATEI IST EINE VORLAGE. Zwei Werte sind instanzspezifisch und stehen
 # hier als Platzhalter aus dem Beispiel der Odoo-Doku: der Host in `base_url`
@@ -33,31 +41,31 @@
 # Tool-Zuschnitt der Integration weglassen.
 #
 # ENVELOPE-ABGLEICH gegen die JSON-2-Doku:
-# * `Authorization: bearer <API-Schlüssel>` — Doku-Pflicht; die Runtime setzt
-# ihn aus `auth.template`. Kleingeschriebenes `bearer` wie in der Doku.
-# * `Content-Type: application/json` — kommt aus `encoding: json`.
-# * `X-Odoo-Database` — laut Doku optional, Pflicht nur, wenn ein Server
-# mehrere Datenbanken hält und `dbfilter` nicht über den Host entscheidet.
-# Wir setzen ihn immer (statischer Header) — schadet nie.
-# * `Accept: application/json` setzt die Runtime ohnehin; hier ausdrücklich,
-# weil der Schnitt ihn als Envelope-Zusage führt.
-# * `Host`/`User-Agent` setzt Go.
+#   * `Authorization: bearer <API-Schlüssel>` — Doku-Pflicht; die Runtime setzt
+#     ihn aus `auth.template`. Kleingeschriebenes `bearer` wie in der Doku.
+#   * `Content-Type: application/json` — kommt aus `encoding: json`.
+#   * `X-Odoo-Database` — laut Doku optional, Pflicht nur, wenn ein Server
+#     mehrere Datenbanken hält und `dbfilter` nicht über den Host entscheidet.
+#     Wir setzen ihn immer (statischer Header) — schadet nie.
+#   * `Accept: application/json` setzt die Runtime ohnehin; hier ausdrücklich,
+#     weil der Schnitt ihn als Envelope-Zusage führt.
+#   * `Host`/`User-Agent` setzt Go.
 #
 # FORMAT-REGELN DES SCHNITTS (lesender POST):
-# * Jeder Aufruf ist POST mit KONSTANTEM Pfad — Modell und Methode sind nie
-# ein Parameter (S1a). Lesen ist `read_via_post: true`, jede Zeile ist in
-# TestLesendePostsSindBelegt mit Pfad und Doku belegt.
-# * Jedes search_read nennt seine Feldliste KONSTANT. Ohne `fields` antwortet
-# Odoo mit 403 (gesperrte Felder wie message_ids, Live-Befund 28.09.2026) —
-# und ein Feld-Parameter ließe den Agenten beliebige Felder ziehen.
-# * Jedes search_read hat ein FESTES `limit: 50`; geblättert wird über
-# `offset`. Der Agent kann den Deckel nicht anheben.
-# * Filter sind UND-Tripel mit festem Feld und festem Operator; der Platzhalter
-# steht nur im Wert. Fehlt ein optionaler Filter, entfällt sein Tripel GANZ
-# (T1). Keine freie Domain, keine Präfix-Operatoren (| & !) — eine
-# OR-Domäne mit fehlendem Zweig weist Odoo mit ValueError ab.
-# * Filter und Werte laufen nur über IDs, NIE über Stufen- oder
-# Kategorie-NAMEN: Namen sind übersetzbar und ändern sich, IDs bleiben.
+#   * Jeder Aufruf ist POST mit KONSTANTEM Pfad — Modell und Methode sind nie
+#     ein Parameter (S1a). Lesen ist `read_via_post: true`, jede Zeile ist in
+#     einem Test mit Pfad und Doku belegt.
+#   * Jedes search_read nennt seine Feldliste KONSTANT. Ohne `fields` antwortet
+#     Odoo mit 403 (gesperrte Felder wie message_ids, Live-Befund 28.09.2026) —
+#     und ein Feld-Parameter ließe den Agenten beliebige Felder ziehen.
+#   * Jedes search_read hat ein FESTES `limit: 50`; geblättert wird über
+#     `offset`. Der Agent kann den Deckel nicht anheben.
+#   * Filter sind UND-Tripel mit festem Feld und festem Operator; der Platzhalter
+#     steht nur im Wert. Fehlt ein optionaler Filter, entfällt sein Tripel GANZ.
+#     Keine freie Domain, keine Präfix-Operatoren (| & !) — eine
+#     OR-Domäne mit fehlendem Zweig weist Odoo mit ValueError ab.
+#   * Filter und Werte laufen nur über IDs, NIE über Stufen- oder
+#     Kategorie-NAMEN: Namen sind übersetzbar und ändern sich, IDs bleiben.
 #
 # SCHREIBEN: Jedes Schreibwerkzeug bildet GENAU EINE ORM-Methode ab. JSON-2
 # kennt keine Transaktionsklammer über mehrere Aufrufe; zusammengesetztes
@@ -67,36 +75,65 @@
 # Nachschnitt). `set_lead_stage` schreibt nur `stage_id` — der Bot darf an
 # crm.lead nichts anderes schreiben (403).
 #
-# CHATTER (SEC-Regeln B1–B5): Notizen lesen an Aufgabe und Partner,
-# eine interne Notiz an einer Aufgabe schreiben — sonst nichts.
-# * Lesen (`list_task_notes`, `list_partner_notes`) ist `mail.message/search_read`
-# mit einer POSITIVEN, KONSTANTEN Domain aus vier UND-Tripeln: das Modell
-# (fest je Werkzeug, nie ein Parameter), `res_id` aus einem PFLICHT-Parameter
-# (sonst fiele das Tripel weg und das Werkzeug läse den Chatter ALLER
-# Datensätze), `message_type = comment` und `subtype_id.internal = true`. Nur
-# interne Notizen kommen durch — keine eingehenden Mails, kein „Nachricht
-# senden", keine Portal-Antworten von Kunden, keine protokollierten
-# Änderungen (Tracking). Keine Negativliste: Kundeneingänge sind nicht nur
-# `email`.
-# * Die Feldliste ist `id, date, body` — ohne Autor (die Aktivitätsspur je
-# Mitarbeiter, Leitplanke 1), ohne Empfänger, Anhänge und Tracking. `limit: 20`
-# (jeder Eintrag trägt bis zu 2000 Zeichen), neueste zuerst.
-# * `body` ist Odoo-HTML und wird in der Projektion auf 2000 Zeichen gekürzt
-# (`body[:2000]`, runenweise; ein leeres Feld kommt als null).
-# * Schreiben (`add_task_note`) ist `project.task/message_post` mit GENAU den
-# Schlüsseln `ids`, `body`, `message_type: comment`, `subtype_xmlid:
-# mail.mt_note`. Kein `partner_ids` (Benachrichtigung und Mail), kein
-# `author_id` (Autor ist der Bot), keine Anhänge, kein Betreff. Der Text steht
-# in `redact_params`. Eine Notiz an einem Partner oder Lead gibt es nicht.
-# * ⚠️ EIGENE INTEGRATION MIT EINEM INTERNEN Odoo-Nutzer (SEC-Entscheid B5):
-# Odoo zeigt interne Notizen nur internen Nutzern; einem share-Nutzer wie dem
-# Bot der übrigen Werkzeuge verweigert es `mail.message` (403) und blendet
-# interne Notizen im Quelltext aus. Deshalb eine ZWEITE Integration aus
-# dieser Vorlage (z. B. `odoo-chatter`, eigenes Credential `odoo-chatter`),
-# deren Token NUR die drei Chatter-Werkzeuge bekommt, mit einem eigenen
-# internen Bot mit minimalen Gruppen. Die Integration mit dem share-Bot
-# vergibt die drei Werkzeuge nicht. Gruppen, Reichweite des Schlüssels und
-# Kosten: (Produkt-Doku, nicht öffentlich) §3 („Chatter-Bot").
+# TAGESDECKEL: `daily_cap: 50` an set_lead_stage und
+# add_lead_note. Der Kern zählt VERSUCHE je Integration und Werkzeug und
+# UTC-Tag im Serverprozess: gezählt wird nach der Eingabeprüfung (Schema, enum)
+# und vor dem Request, Upstream-Fehler und Timeouts zählen mit. Der 51. Aufruf
+# endet mit einer festen Absage ohne Request. Der Zähler beginnt beim
+# Tageswechsel und nach einem Neustart bei null. log_hours, create_task und
+# add_task_note haben keinen Deckel.
+#
+# LEADS ZÄHLEN: `count_leads` ist EIN web_search_read auf
+# crm.lead mit FESTER `specification` (id, stage_id, team_id, source_id,
+# medium_id, campaign_id, create_date, date_closed, won_status; die
+# Many2one-Felder nur mit Anzeigename) — kein Name, kein Kontakt, keine E-Mail,
+# kein Telefon, kein Verantwortlicher, keine Herkunfts-Rohtexte (jnpt_utm_*,
+# jnpt_herkunft_text), und kein `fields`-Parameter, der mehr anforderte. Die
+# Filter sind UND-Tripel mit festem Feld und festem Operator (team_id, stage_id,
+# source_id, medium_id, campaign_id mit =; create_date mit >= und <); dazu das
+# konstante Tripel `active in [true, false]`, damit verlorene (archivierte) Leads
+# mitzählen. Es gibt keinen Freitext-Parameter. Datenschutz: keine Personenfelder
+# im Pfad, deshalb kein `privacy:`-Block.
+#
+# CHATTER: Notizen lesen an Aufgabe und Partner,
+# eine interne Notiz an einer Aufgabe schreiben und eine FESTE
+# Status-Notiz an einem Lead schreiben — sonst nichts.
+#   * Lesen (`list_task_notes`, `list_partner_notes`) ist `mail.message/search_read`
+#     mit einer POSITIVEN, KONSTANTEN Domain aus vier UND-Tripeln: das Modell
+#     (fest je Werkzeug, nie ein Parameter), `res_id` aus einem PFLICHT-Parameter
+#     (sonst fiele das Tripel weg und das Werkzeug läse den Chatter ALLER
+#     Datensätze), `message_type = comment` und `subtype_id.internal = true`. Nur
+#     interne Notizen kommen durch — keine eingehenden Mails, kein „Nachricht
+#     senden", keine Portal-Antworten von Kunden, keine protokollierten
+#     Änderungen (Tracking). Keine Negativliste: Kundeneingänge sind nicht nur
+#     `email`.
+#   * Die Feldliste ist `id, date, body` — ohne Autor (die Aktivitätsspur je
+#     Mitarbeiter), ohne Empfänger, Anhänge und Tracking. `limit: 20`
+#     (jeder Eintrag trägt bis zu 2000 Zeichen), neueste zuerst.
+#   * `body` ist Odoo-HTML und wird in der Projektion auf 2000 Zeichen gekürzt
+#     (`body[:2000]`, runenweise; ein leeres Feld kommt als null).
+#   * Schreiben (`add_task_note`) ist `project.task/message_post` mit GENAU den
+#     Schlüsseln `ids`, `body`, `message_type: comment`, `subtype_xmlid:
+#     mail.mt_note`. Kein `partner_ids` (Benachrichtigung und Mail), kein
+#     `author_id` (Autor ist der Bot), keine Anhänge, kein Betreff. Der Text steht
+#     in `redact_params`. Eine Notiz an einem Partner gibt es nicht.
+#   * Schreiben am Lead (`add_lead_note`) ist `crm.lead/message_post` mit
+#     denselben vier Schlüsseln (`ids`, `body`, `message_type: comment`,
+#     `subtype_xmlid: mail.mt_note`) — ohne `partner_ids`, Autor, Anhänge und
+#     Betreff. Es gibt KEINEN Freitext: Der Text ist der feste Wortlaut
+#     „Status-Notiz (JanuaPort): {grund}", `grund` ist ein enum
+#     (`antwort_extern`, `kein_bedarf`), und die Runtime weist jeden anderen Wert
+#     ab, bevor ein Request entsteht. `daily_cap: 50`.
+#   * ⚠️ EIGENE INTEGRATION MIT EINEM INTERNEN Odoo-Nutzer:
+#     Odoo zeigt interne Notizen nur internen Nutzern; einem share-Nutzer wie dem
+#     Bot der übrigen Werkzeuge verweigert es `mail.message` (403) und blendet
+#     interne Notizen im Quelltext aus. Deshalb eine ZWEITE Integration aus
+#     dieser Vorlage (z. B. `odoo-chatter`, eigenes Credential `odoo-chatter`),
+#     deren Token NUR die vier Chatter-Werkzeuge (list_task_notes,
+#     list_partner_notes, add_task_note, add_lead_note) bekommt, mit einem
+#     eigenen internen Bot mit minimalen Gruppen. Die Integration mit dem
+#     share-Bot vergibt die vier Werkzeuge nicht. Gruppen, Reichweite des
+#     Schlüssels und Kosten: (Produkt-Doku, nicht öffentlich) §3 („Chatter-Bot").
 #
 # FEHLER: Odoos Fehlerobjekt trägt im Feld `debug` einen vollständigen
 # Python-Traceback samt Server-Pfaden. Er erreicht den Agenten nicht — die
@@ -113,19 +150,19 @@
 # gehören, entscheidet der Betreiber. Vorlage zum Ergänzen am Werkzeug
 # (Format: docs/connector-spec.md, Abschnitt Privacy):
 #
-# privacy:
-# read:
-# - {field: email, label: email}
-# - {field: phone, label: telefon}
+#   privacy:
+#     read:
+#       - {field: email, label: email}
+#       - {field: phone, label: telefon}
 #
 # Für die Notizen (list_task_notes, list_partner_notes) ein `scan` auf den
 # Freitext. Ehrliche Grenze: `scan` findet E-Mail, Telefon und IBAN,
 # aber keine Namen — und Notizen sind Freitext über Personen.
 #
-# privacy:
-# scan:
-# - field: body
-# patterns: [email, telefon, iban]
+#   privacy:
+#     scan:
+#       - field: body
+#         patterns: [email, telefon, iban]
 #
 # Many2one-Felder kommen als `[id, "Name"]` — ein `read`-Feld ersetzt den
 # ganzen Wert; das vorher gegen die eigene Instanz prüfen.
@@ -139,13 +176,20 @@ name: odoo
 # tragen die drei Schreibwerkzeuge den Kernsatz heute (nur Beschreibung).
 # 3.0.0: drei neue Werkzeuge (Chatter) — DimToolAdded, `major`;
 # das Schreibwerkzeug add_task_note trägt den Kernsatz heute.
-version: "3.1.0"
+# 4.0.0: zwei neue Werkzeuge (count_leads, add_lead_note) und der
+# Tagesdeckel `daily_cap: 50` an set_lead_stage — DimToolAdded und DimDailyCap,
+# `major`; add_lead_note trägt den Kernsatz heute.
+# 4.0.1: `redact_params` führt `q` und `name` wieder — eine Erweiterung
+# der Redaktion ist für den Flächen-Wächter ein Fix (PATCH).
+version: "4.0.1"
 description: >
   Odoo 19 via the JSON-2 API: search contacts, CRM leads and stages, projects,
   tasks, timesheet lines, contracts and employees; read the internal notes of a
   task or contact (needs a separate integration with an internal Odoo user);
-  log hours, create a task, add an internal note to a task and move a lead to
-  another stage. Every search returns at most 50 records per
+  count leads by team, stage, source, medium, campaign and creation period;
+  log hours, create a task, add an internal note to a task, add a status note
+  with a fixed text to a lead (separate integration with an internal Odoo user)
+  and move a lead to another stage. Every search returns at most 50 records per
   call and pages with offset.
 # PLATZHALTER — durch die eigene Odoo-Adresse ersetzen (https://…; im selben
 # Docker-Netz auch http://<dienstname>:8069, siehe Anleitung).
@@ -171,10 +215,11 @@ headers:
 timeout: 30s
 min_interval: 500ms
 
-# Die Aufgabenbeschreibung und der Text einer Chatter-Notiz sind freier Text,
-# oft über Personen (Gesprächsnotiz). Im Audit-Log erscheinen sie deshalb nur als
-# [REDACTED]. Weitere Parameter zu redigieren ist eine eigene Entscheidung.
-redact_params: [description, body]
+# Freitext, der Personennamen trägt, erscheint im Audit-Log nur als [REDACTED]:
+# die Aufgabenbeschreibung (description), der Text einer Chatter- oder Status-Notiz
+# (body), der Suchtext (q) und der Name einer Aufgabe oder eines Stundenzettels
+# (name). Weitere Parameter zu redigieren ist eine eigene Entscheidung.
+redact_params: [description, body, q, name]
 
 tools:
   - name: check
@@ -265,6 +310,73 @@ tools:
           - ["stage_id", "=", "{stage_id}"]
           - ["partner_id", "=", "{partner_id}"]
         fields: ["id", "name", "partner_id", "stage_id", "expected_revenue", "probability", "user_id", "date_deadline", "won_status"]
+        limit: 50
+        offset: "{offset}"
+
+  - name: count_leads
+    description: >
+      Counts CRM leads and opportunities (model crm.lead) and returns an object
+      {length, records}. length is the total number of matching leads; records
+      holds at most 50 of them. Per record: id, stage_id, team_id, source_id,
+      medium_id and campaign_id (each as {id, display_name}, or false when
+      empty), create_date, date_closed (false while the lead is open) and
+      won_status (won, lost or pending). Lost (archived) leads are counted too.
+      All filters are optional and combined with AND: team, stage (numeric id
+      from list_stages), source, medium, campaign (ids as shown in the records)
+      and a creation period with date_from (first day included) and date_to
+      (day up to which leads are counted, itself excluded), both YYYY-MM-DD.
+      Without filters it counts all leads. If records has 50 entries, call
+      again with offset 50, 100, … to see more. Read-only.
+    params:
+      - name: team_id
+        description: Optional. Sales team id, as shown in team_id of the records.
+        type: integer
+      - name: stage_id
+        description: Optional. Numeric stage id from list_stages.
+        type: integer
+      - name: source_id
+        description: Optional. Source id (utm.source), as shown in source_id of the records.
+        type: integer
+      - name: medium_id
+        description: Optional. Medium id (utm.medium), as shown in medium_id of the records.
+        type: integer
+      - name: campaign_id
+        description: Optional. Campaign id (utm.campaign), as shown in campaign_id of the records.
+        type: integer
+      - name: date_from
+        description: Optional. First creation day to include, format YYYY-MM-DD.
+        type: string
+      - name: date_to
+        description: Optional. Creation day up to which leads are counted (this day is excluded), format YYYY-MM-DD.
+        type: string
+      - name: offset
+        description: Optional. Number of records to skip (paging, steps of 50).
+        type: integer
+    request:
+      method: POST
+      path: /json/2/crm.lead/web_search_read
+      encoding: json
+      read_via_post: true
+      body_json:
+        domain:
+          - ["team_id", "=", "{team_id}"]
+          - ["stage_id", "=", "{stage_id}"]
+          - ["source_id", "=", "{source_id}"]
+          - ["medium_id", "=", "{medium_id}"]
+          - ["campaign_id", "=", "{campaign_id}"]
+          - ["create_date", ">=", "{date_from}"]
+          - ["create_date", "<", "{date_to}"]
+          - ["active", "in", [true, false]]
+        specification:
+          id: {}
+          stage_id: {fields: {display_name: {}}}
+          team_id: {fields: {display_name: {}}}
+          source_id: {fields: {display_name: {}}}
+          medium_id: {fields: {display_name: {}}}
+          campaign_id: {fields: {display_name: {}}}
+          create_date: {}
+          date_closed: {}
+          won_status: {}
         limit: 50
         offset: "{offset}"
 
@@ -562,7 +674,7 @@ tools:
       permission "odoo:set_lead_stage".
     params:
       - name: lead_id
-        description: Required. Lead id from search_leads.
+        description: Required. Lead id from count_leads.
         type: integer
         required: true
       - name: stage_id
@@ -570,6 +682,7 @@ tools:
         type: integer
         required: true
     write: true
+    daily_cap: 50
     request:
       method: POST
       path: /json/2/crm.lead/write
@@ -681,5 +794,42 @@ tools:
       body_json:
         ids: ["{task_id}"]
         body: "{body}"
+        message_type: comment
+        subtype_xmlid: mail.mt_note
+
+  - name: add_lead_note
+    description: >
+      Adds ONE internal note ("Log note") with a fixed text to the chatter of a
+      CRM lead (crm.lead), written as the bot user. The note reads
+      "Status-Notiz (JanuaPort): <grund>"; grund is the only variable part and
+      one of antwort_extern (the lead was answered outside Odoo) or kein_bedarf
+      (the lead has no demand). It is an internal note only: no one is notified
+      and no e-mail is sent, not even to followers. The tool accepts up to 50
+      calls per day (UTC); further calls are declined until the next day.
+      Writes to Odoo. Needs a separate integration with an internal Odoo user;
+      with the bot of the other tools (not an internal user) it fails with HTTP
+      403.
+      This is a WRITE action. It is annotated as such, so your client may ask
+      the user; JanuaPort itself never asks. It needs the tool-exact
+      permission "odoo:add_lead_note".
+    params:
+      - name: lead_id
+        description: Required. Lead id from count_leads.
+        type: integer
+        required: true
+      - name: grund
+        description: "Required. Reason of the note: antwort_extern (answered outside Odoo) or kein_bedarf (no demand)."
+        type: string
+        required: true
+        enum: [antwort_extern, kein_bedarf]
+    write: true
+    daily_cap: 50
+    request:
+      method: POST
+      path: /json/2/crm.lead/message_post
+      encoding: json
+      body_json:
+        ids: ["{lead_id}"]
+        body: "Status-Notiz (JanuaPort): {grund}"
         message_type: comment
         subtype_xmlid: mail.mt_note
