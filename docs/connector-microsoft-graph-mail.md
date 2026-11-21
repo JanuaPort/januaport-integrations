@@ -915,6 +915,9 @@ einen Beleg, weil das Audit den Text schwärzt. Fehlt `cc`, entfällt `ccRecipie
   teilen (gleiche App, gleicher Scope auf genau ein Postfach), siehe
   (Produkt-Doku, nicht öffentlich); wer den
   Management Scope der App ändert, ändert damit beide Installationen.
+- **Nur `send_mail` übernehmen:** Wer eine Installation allein mit `send_mail` ableitet,
+  kürzt `redact_params` auf `[content]`. `comment` gehört zu `reply`, und der Validator weist
+  einen Eintrag ab, den kein übernommenes Werkzeug als Parameter kennt.
 - **Das Token** einer solchen Installation trägt nur `<integration>:send_mail`; der
   Klartext liegt allein in einer Datei auf dem Rechner des Betreibers (Zugriff nur für den
   Benutzer) und nie in einem Repo, und im Probelauf-Vermerk steht nur die Token-ID.
