@@ -37,7 +37,7 @@ kann sie von außen beigetragen und geprüft werden, ohne dass jemand das Gatewa
 |---|---|
 | [`connector-specs/`](connector-specs/) | Die ausgelieferten REST-Specs, Tabelle unten. |
 | [`upstream-specs/`](upstream-specs/) | Beispiel-Konfiguration für einen **MCP-Upstream** (fremder MCP-Server unter unserer Governance): `github.yaml`. |
-| [`docs/`](docs/) | Die vier Format-Verträge, die Bau-Disziplin und drei Betreiber-Anleitungen. |
+| [`docs/`](docs/) | Die vier Format-Verträge, die Bau-Disziplin und vier Betreiber-Anleitungen. |
 | [`examples/`](examples/) | Beilagen zu den Anleitungen (heute: das Exchange-Skript zur Ein-Postfach-Grenze). |
 
 ## Die vier Format-Verträge
@@ -103,7 +103,7 @@ gelaufen, im Backlog dokumentiert.
 
 | Spec | Werkzeuge | Stand |
 |---|---|---|
-| [`gemini-websuche.yaml`](connector-specs/gemini-websuche.yaml) (1.0.0) | 1, lesend | Gebaut; live belegt (03.11.2026, 13 feste Fragen). Je Aufruf eine feste öffentliche Frage an die Gemini-API mit Google-Suche; Antworttext und Quelldomains. Trend-Signal für die Sichtbarkeit in KI-Antworten, kein Abbild von Google AI Overviews. Kostenpflichtige API; den Anbieterdeckel setzt der Betreiber. |
+| [`gemini-websuche.yaml`](connector-specs/gemini-websuche.yaml) (1.0.1) | 1, lesend | Gebaut; live belegt (03.11.2026, 13 Fragen des Skripts). Je Aufruf eine freie Frage an die Gemini-API mit Google-Suche; Antworttext und Quelldomains. Die Frage steht auf der Standard-Protokolltiefe geschwärzt im Audit-Log, beim Anbieter nicht. Pflichtschritt vor dem ersten Aufruf: die Rückwandlung der Pseudonyme für `ask` abschalten ([Anleitung](docs/connector-websuche-geo.md)). Das Recht hält nur das Skript-Token der GEO-Messung. Trend-Signal für die Sichtbarkeit in KI-Antworten, kein Abbild von Google AI Overviews. Kostenpflichtige API; den Anbieterdeckel setzt der Betreiber. |
 | [`google-search-console.yaml`](connector-specs/google-search-console.yaml) (2.0.0) | 5, lesend | Gebaut, synthetisch geprüft; Live-Abnahme offen. Privater Beisteller, feste öffentliche Seitenliste; Zeiträume 1–90 Tage, `page_compare` für zwei gleich lange Zeiträume. Query-Freitext standardmäßig gesperrt (Betreiberschalter); Auditmetadaten nötig. |
 | [`google-analytics.yaml`](connector-specs/google-analytics.yaml) (2.0.0) | 4, lesend | Gebaut, synthetisch geprüft; Live-Abnahme offen. Feste GA4-Aggregate, Host-/Seitenfilter, optionaler Key-Event-Messvertrag. |
 | [`google-search-console-manage.yaml`](connector-specs/google-search-console-manage.yaml) (1.1.0) | 4, davon 1 schreibend | Gebaut; live belegt (22.10.2026). Sitemaps auflisten, lesen und einreichen, URL-Inspektion. Kein Löschen; Einreichen löst kein Crawling aus. Tagesdeckel und Änderungszeile im Beisteller. |
@@ -123,7 +123,7 @@ gelaufen, im Backlog dokumentiert.
 | [`jtl-wawi.yaml`](connector-specs/jtl-wawi.yaml) (1.0.0) | 10, lesend | Gebaut; Live-Beleg ausstehend. On-Prem-API-Version 2.0; feste Request-Header, kein Schreiben. |
 | [`microsoft-graph-calendar.yaml`](connector-specs/microsoft-graph-calendar.yaml) (1.0.0) | 3, lesend | Gebaut; Live-Beleg ausstehend. Ein Postfach; keine Teilnehmer und kein Termintext. |
 | [`odoo.yaml`](connector-specs/odoo.yaml) (4.0.1) | 17, davon 5 schreibend | Gebaut. Werkzeuge bis 3.0.0 live belegt (30.09.2026); die Ergänzungen der 4.0.0 (`count_leads`, `add_lead_note`, Tagesdeckel von 50 an `set_lead_stage` und `add_lead_note`) noch nicht live belegt. Suchtext (`q`) und Namen (`name`) stehen im Audit-Log geschwärzt. Chatter, auch `add_lead_note`, benötigt eine eigene Integration mit internem Odoo-Nutzer. Das Vertragsmodell ist eine Erweiterung, kein Odoo-Standard. |
-| [`openai-websuche.yaml`](connector-specs/openai-websuche.yaml) (1.0.0) | 1, lesend | Gebaut; live belegt (03.11.2026, 13 feste Fragen). Je Aufruf eine feste öffentliche Frage an die OpenAI-Responses-API mit Websuche; Antworttext und zitierte URLs. Trend-Signal für die Sichtbarkeit in KI-Antworten, kein Abbild der ChatGPT-App. Kostenpflichtige API; den Anbieterdeckel setzt der Betreiber. |
+| [`openai-websuche.yaml`](connector-specs/openai-websuche.yaml) (1.0.1) | 1, lesend | Gebaut; live belegt (03.11.2026, 13 Fragen des Skripts). Je Aufruf eine freie Frage an die OpenAI-Responses-API mit Websuche; Antworttext und zitierte URLs. Die Frage steht auf der Standard-Protokolltiefe geschwärzt im Audit-Log, beim Anbieter nicht. Pflichtschritt vor dem ersten Aufruf: die Rückwandlung der Pseudonyme für `ask` abschalten ([Anleitung](docs/connector-websuche-geo.md)). Das Recht hält nur das Skript-Token der GEO-Messung. Trend-Signal für die Sichtbarkeit in KI-Antworten, kein Abbild der ChatGPT-App. Kostenpflichtige API; den Anbieterdeckel setzt der Betreiber. |
 | [`openproject.yaml`](connector-specs/openproject.yaml) (1.0.0) | 7, lesend | Gebaut; live belegt gegen 17.8.0 (30.09.2026). Projekte und Arbeitspakete; keine Zeitbuchungen und keine Nutzerlisten. |
 | [`paperless.yaml`](connector-specs/paperless.yaml) (1.0.0) | 6, lesend | Gebaut; live belegt gegen 3.2.1 (30.09.2026). Nur Metadaten; kein OCR-Text, Datei-Inhalt oder Download. |
 | [`shopware-admin.yaml`](connector-specs/shopware-admin.yaml) (1.0.0) | 6, lesend | Gebaut; live belegt gegen 6.7.14.2 (29.09.2026). ACL-Rolle nur lesend; JSON-Antwortformat und geerbte Variantennamen. |
@@ -137,7 +137,7 @@ Spec-Kommentaren und in der [Bau-Disziplin](docs/connector-treue.md). Die Live-B
 oben stammen aus dem Produkt; dieser Spiegel-Nachzug wurde lokal ohne
 Anbieter-Aufrufe geprüft.
 
-Betreiber-Anleitungen liegen für die beiden Graph-Connectoren bei
+Die Einrichtung der beiden Websuche-Vorlagen steht in der [Anleitung](docs/connector-websuche-geo.md). Betreiber-Anleitungen liegen für die beiden Graph-Connectoren bei
 ([Postfach](docs/connector-microsoft-graph-mail.md),
 [SharePoint](docs/connector-microsoft-graph-sharepoint.md)) — sie beschreiben die
 Einrichtung auf der **Gegenseite** (App-Registrierung, Berechtigungen, Grenzen) und sind

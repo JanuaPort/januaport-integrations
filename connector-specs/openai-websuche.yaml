@@ -1,15 +1,24 @@
-# GEO-Stichprobe: öffentliche Suchfragen an die OpenAI-Websuche (Stufe 1 „Sicher verbinden“).
-# Live belegt 03.11.2026 (13 feste Fragen, alle ok). Trend-Signal für Sichtbarkeit, kein Abbild der ChatGPT-App.
+# GEO-Stichprobe: Suchfragen an die OpenAI-Websuche (Stufe 1 „Sicher verbinden“).
+# Live belegt 03.11.2026 (13 Fragen des Skripts, alle ok). Trend-Signal für Sichtbarkeit, kein Abbild der ChatGPT-App.
 # Vault-Credential: openai-geo (API-Schlüssel, nur über auth in den Header eingesetzt).
-# Kostenpflichtige Modell-/Websuche: Anbieterdeckel setzt der Betreiber bei OpenAI;
-# Das aufrufende Skript begrenzt die Aufrufe je Lauf (13); daily_cap gilt nur für Schreibwerkzeuge.
-# Frage bleibt im Audit sichtbar: feste öffentliche GEO-Fragen, keine PII-Redaktion nötig.
+# FREIE FRAGE, keine feste: `frage` ist freier Text, die Vorlage erzwingt keine feste Frage. Die Grenze ist das
+# Recht auf diese Integration; nur das Skript-Token der GEO-Messung hält es (Aktivierungsregel wie bei
+# linkedin-seite-community; die Token-ID steht im Probelauf-Vermerk). Ein Recht auf die ganze Integration
+# genügt, weil der lesende POST ein Lesewerkzeug ist. Fest ist allein das aufrufende Skript.
+# Schwärzung: `redact_params: [frage]` schwärzt die Frage im Audit nur auf der Protokolltiefe „Metadaten“ (Default).
+# Auf „Abfragen“ oder „Antworten“ steht sie im Inhaltsspeicher. Beim Anbieter ist sie nicht geschwärzt.
+# Rückwandlung: Ein Pseudonym in der Frage wird vor dem Aufruf zu Klartext zurückgewandelt und geht an den Anbieter.
+# Der Abschalter ist eine Betreiber-Einstellung je Integration und Werkzeug, aus der Spec nicht setzbar. Pflichtschritt
+# vor dem ersten Aufruf: Rückwandlung für `ask` auf „Aus“ (Admin-GUI, Sektion „Pseudonymisierung“; REST
+# PUT /integrations/{name}/privacy/{tool} mit rehydrate false; Admin-MCP admin_set_tool_privacy mit rehydrate off).
+# Kosten: kostenpflichtige Modell-/Websuche. Das Gateway hat für Lesewerkzeuge keinen Kostendeckel (daily_cap an einem
+# Lesewerkzeug ist ein Ladefehler); den Anbieterdeckel setzt der Betreiber beim Anbieter, das Skript begrenzt die Läufe (13).
 # Doku: https://developers.openai.com/api/docs/guides/tools-web-search
 #       https://developers.openai.com/api/reference/resources/responses/methods/create
 # Prüfdatum der dokumentnahen Request-/Antwortform: 02.11.2026; Modell-ID live prüfen.
 
 name: openai-websuche
-version: "1.0.0"
+version: "1.0.1"
 description: >
   OpenAI web search for public GEO visibility samples, using the fixed
   gpt-5-mini model. Returns answer text and sources as a visibility trend signal;
@@ -20,6 +29,7 @@ auth:
   template: "Bearer {{credential}}"
   credential: openai-geo
 timeout: 90s
+redact_params: [frage]
 
 tools:
   - name: ask
@@ -28,6 +38,10 @@ tools:
       fixed gpt-5-mini model. Returns answer text and sources (URLs and titles).
       Results are a trend signal for visibility; the ChatGPT consumer app has
       its own models and search behavior. Read-only.
+      The question is free text; the boundary is the permission on this integration, held only by the script token of the GEO measurement.
+      Before the first call the operator switches pseudonym rehydration off for this tool (section Pseudonymisierung); without that step,
+      plain names behind pseudonyms in the question go to OpenAI. At the default log depth the audit shows the question as [REDACTED].
+      The gateway sets no cost cap for read tools.
     params:
       - name: frage
         description: A search question in natural language.

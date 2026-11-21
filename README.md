@@ -37,7 +37,7 @@ reviewed from outside without anyone touching the gateway.
 |---|---|
 | [`connector-specs/`](connector-specs/) | The shipped REST specs, see the table below. |
 | [`upstream-specs/`](upstream-specs/) | Example configuration for an **MCP upstream** (a third-party MCP server under our governance): `github.yaml`. |
-| [`docs/`](docs/) | The four format contracts, the build discipline and three operator guides. |
+| [`docs/`](docs/) | The four format contracts, the build discipline and four operator guides. |
 | [`examples/`](examples/) | Attachments to the guides (today: the Exchange script for the single-mailbox limit). |
 
 ## The four format contracts
@@ -99,7 +99,7 @@ system and documented in the backlog.
 
 | Spec | Tools | Status |
 |---|---|---|
-| [`gemini-websuche.yaml`](connector-specs/gemini-websuche.yaml) (1.0.0) | 1, read-only | Built; live verified (2026-11-03, 13 fixed questions). One fixed public question per call to the Gemini API with Google Search grounding; answer text and source domains. A trend signal for visibility in AI answers, not a copy of Google AI Overviews. Paid API; the operator sets the provider cap. |
+| [`gemini-websuche.yaml`](connector-specs/gemini-websuche.yaml) (1.0.1) | 1, read-only | Built; live verified (2026-11-03, 13 questions of the script). One free question per call to the Gemini API with Google Search grounding; answer text and source domains. The question is redacted in the audit log at the default log depth, but not at the provider. Mandatory step before the first call: switch pseudonym rehydration off for `ask` ([setup guide](docs/connector-websuche-geo.md)). Only the script token of the GEO measurement holds the right. A trend signal for visibility in AI answers, not a copy of Google AI Overviews. Paid API; the operator sets the provider cap. |
 | [`google-search-console.yaml`](connector-specs/google-search-console.yaml) (2.0.0) | 5, read-only | Built; synthetic contracts verified, live acceptance pending. Private sidecar, fixed public page allowlist; periods of 1–90 days, `page_compare` for two equal periods. Query text disabled by default (operator switch); metadata audit depth required. |
 | [`google-analytics.yaml`](connector-specs/google-analytics.yaml) (2.0.0) | 4, read-only | Built; synthetic contracts verified, live acceptance pending. Fixed GA4 aggregates, hostname/page filters; optional key-event measurement contract. |
 | [`google-search-console-manage.yaml`](connector-specs/google-search-console-manage.yaml) (1.1.0) | 4, 1 of them writing | Built; live verified (2026-10-22). List, read and submit sitemaps, URL inspection. No delete; submitting does not trigger a crawl. Daily cap and change line in the sidecar. |
@@ -119,7 +119,7 @@ system and documented in the backlog.
 | [`jtl-wawi.yaml`](connector-specs/jtl-wawi.yaml) (1.0.0) | 10, read-only | Built; live evidence pending. On-premise API version 2.0; fixed request headers, no writing. |
 | [`microsoft-graph-calendar.yaml`](connector-specs/microsoft-graph-calendar.yaml) (1.0.0) | 3, read-only | Built; live evidence pending. One mailbox; no attendees or event text. |
 | [`odoo.yaml`](connector-specs/odoo.yaml) (4.0.1) | 17, of which 5 write | Built. Tools up to 3.0.0 verified live (30 September 2026); the 4.0.0 additions (`count_leads`, `add_lead_note`, daily cap of 50 on `set_lead_stage` and `add_lead_note`) have no live evidence yet. Search text (`q`) and names (`name`) are redacted in the audit log. Chatter, including `add_lead_note`, requires a separate integration with an internal Odoo user. The contract model is an extension, not Odoo standard. |
-| [`openai-websuche.yaml`](connector-specs/openai-websuche.yaml) (1.0.0) | 1, read-only | Built; live verified (2026-11-03, 13 fixed questions). One fixed public question per call to the OpenAI Responses API with web search; answer text and cited URLs. A trend signal for visibility in AI answers, not a copy of the ChatGPT app. Paid API; the operator sets the provider cap. |
+| [`openai-websuche.yaml`](connector-specs/openai-websuche.yaml) (1.0.1) | 1, read-only | Built; live verified (2026-11-03, 13 questions of the script). One free question per call to the OpenAI Responses API with web search; answer text and cited URLs. The question is redacted in the audit log at the default log depth, but not at the provider. Mandatory step before the first call: switch pseudonym rehydration off for `ask` ([setup guide](docs/connector-websuche-geo.md)). Only the script token of the GEO measurement holds the right. A trend signal for visibility in AI answers, not a copy of the ChatGPT app. Paid API; the operator sets the provider cap. |
 | [`openproject.yaml`](connector-specs/openproject.yaml) (1.0.0) | 7, read-only | Built; verified live against 17.8.0 (30 September 2026). Projects and work packages; no time entries or user lists. |
 | [`paperless.yaml`](connector-specs/paperless.yaml) (1.0.0) | 6, read-only | Built; verified live against 3.2.1 (30 September 2026). Metadata only; no OCR text, file content or download. |
 | [`shopware-admin.yaml`](connector-specs/shopware-admin.yaml) (1.0.0) | 6, read-only | Built; verified live against 6.7.14.2 (29 September 2026). Read-only ACL role; JSON response format and inherited variant names. |
@@ -132,7 +132,7 @@ product documentation (not public); format rules and vendor references are in th
 spec comments and [build discipline](docs/connector-treue.md). The live results above
 come from the product; this mirror sync was verified locally without vendor calls.
 
-Operator guides for the two Graph connectors are included
+The setup guide for the two web search templates is [here](docs/connector-websuche-geo.md). Operator guides for the two Graph connectors are included
 ([mailbox](docs/connector-microsoft-graph-mail.md),
 [SharePoint](docs/connector-microsoft-graph-sharepoint.md)). They describe the setup on the **other
 side** (app registration, permissions, limits) and are also the model for how a spec should be
