@@ -2,7 +2,8 @@
 # Separate from linkedin-seite (statistics) and linkedin-seite-manage (editorial plan after human hash approval).
 # Stufe B3 — gebaut, noch nicht live abgenommen. No LinkedIn identity in JanuaPort.
 # Configure as corp integration. Internal target_address approval required.
-# Each tool needs its tool-exact permission; a connector-wide grant adds no write.
+# Only reply needs its tool-exact permission; a connector-wide grant adds no write. comments and tagesliste are read
+# tools: a grant on the whole integration linkedin-seite-community releases both, so that wide grant goes to no token.
 # Audit depth MUST be metadaten for SSO and token callers before activation: comment texts of third parties
 # would otherwise land in the content side table for 30 days. text is redacted; URNs and anlass stay in the audit.
 # Activation rule:
@@ -11,19 +12,21 @@
 #   no Redaktionsplan. No other token gets linkedin-seite-community:comments.
 #   linkedin-seite-community:tagesliste goes to the editorial token (links only, no third-party text); never
 #   comments there. GATE lists the rights of both tokens verbatim in the activation report.
+#   This rule is organisational: neither the spec nor the gateway enforces it. Grant rights tool-exact.
 # The emergency stop is the PO revoking linkedin-seite-community:reply on the reply token in the admin GUI.
 # Credential linkedin-seite is shared with the other two templates. Its value equals the Bridge runtime-key of
 # the place plugin-linkedin-seite; OAuth stays in the service (one grant, five scopes since service 0.4.0).
 # The service checks every reply live at LinkedIn before sending (own post at most 30 days old, top-level
 # comment of exactly this post, not ours, not deleted, no reply of ours yet, none to the same author under
 # this post) and runs replies one after another with 60 s spacing. It counts no replies: the daily cap is
-# daily_cap below and counts attempts, refused ones included.
+# daily_cap below and counts attempts, refused ones included. The counter lives in the memory of the gateway process:
+# it starts at zero after every restart and every reload of the integrations, and each instance counts for itself.
 # Setup: linkedin-seite/README.md in januaport-plugins, service 0.4.0.
 # Official LinkedIn contracts, version 202610:
 # https://learn.microsoft.com/linkedin/marketing/community-management/shares/comments-api?view=li-lms-2026-10
 # https://learn.microsoft.com/linkedin/marketing/community-management/shares/posts-api?view=li-lms-2026-10
 name: linkedin-seite-community
-version: "1.0.0"
+version: "1.0.1"
 description: >
   Comments under the configured company page's own LinkedIn posts through the operator configured
   linkedin-seite service: read unanswered top-level comments, reply as the organization, and a daily
@@ -101,7 +104,8 @@ tools:
       percentages, ‹…› markers or the characters | { } [ ] ( ) < > # \ * _ ~. Replies run one after another,
       at least 60 seconds apart; a call may wait. HTTP 200 with nicht_ausgefuehrt true and a fixed error code
       means nothing was sent. ausgefuehrt true returns antwort_urn, link and doppelt (a second reply of ours
-      was seen afterwards). JanuaPort allows 8 attempts (Versuche) per UTC day; refused attempts count too.
+      was seen afterwards). JanuaPort allows 8 attempts (Versuche) per UTC day and per process run: the counter restarts at
+      zero after a restart or a reload of the integrations. Refused attempts count too.
       This is a WRITE action. It is annotated as such, so your client may ask the user;
       JanuaPort itself never asks. It needs the tool-exact permission
       "linkedin-seite-community:reply".
