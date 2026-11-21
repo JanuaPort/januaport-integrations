@@ -7,8 +7,7 @@ sind nicht nötig, ein Exchange-Online-Admin-Zugang schon.
 
 ## 1. Was der Connector kann — und was er ausdrücklich nicht kann
 
-**Neun Werkzeuge insgesamt: sechs aus der YAML-Spec und drei Go-native.**
-Die sechs YAML-Werkzeuge:
+**Sieben Werkzeuge in der Datei, dazu drei Go-native weiter unten:**
 
 | Tool | Was es tut | Art |
 |---|---|---|
@@ -18,20 +17,29 @@ Die sechs YAML-Werkzeuge:
 | `microsoft_graph_mail_read_attachment` | den **Textinhalt** genau eines Anhangs holen | lesend |
 | `microsoft_graph_mail_create_draft` | eine Mail als **Entwurf** ins Postfach legen | **schreibend** |
 | `microsoft_graph_mail_reply` | **eine** vorhandene Nachricht beantworten, nur an deren Absender (seit 3.0.0, **Opt-in**, siehe Abschnitt 11) | **schreibend, sendet** |
+| `microsoft_graph_mail_send_mail` | eine **neue** Mail an eine frei wählbare Adresse senden, optional mit einer Kopie, ohne Tagesdeckel (seit 4.0.0, **Opt-in**, siehe Abschnitt 12) | **schreibend, sendet** |
 
-**Gesendet wird nur als Antwort, und nur als Opt-in.** `create_draft` sendet nichts: JanuaPort
+**Gesendet wird nur über zwei Werkzeuge, und nur als Opt-in.** `create_draft` sendet nichts: JanuaPort
 schreibt den Entwurf, ein Mensch öffnet ihn in Outlook, prüft ihn und klickt auf Senden.
-Das einzige Werkzeug, das sendet, ist `reply` (Abschnitt 11): Es beantwortet **eine**
-vorhandene Nachricht, nur an deren Absender, ohne weitere Empfänger, ohne Anhänge,
-ohne Weiterleiten. Es gibt kein `reply_all` und kein `send_mail`. `reply` läuft nur, wenn
-der Admin es bei der Werkzeugauswahl wählt, ein Token das tool-genaue Recht trägt und
-Exchange der App die Rolle `Application Mail.Send` mit einem eigenen Bereich nur auf das
-Anfrage-Postfach gegeben hat. Eine App ohne diese Rolle kann nicht senden: Microsoft
+Die Werkzeuge, die senden, sind `reply` (Abschnitt 11) und `send_mail` (Abschnitt 12).
+`reply` beantwortet **eine** vorhandene Nachricht, nur an deren Absender, ohne weitere
+Empfänger, ohne Anhänge, ohne Weiterleiten. `send_mail` sendet **eine neue Mail** an eine
+frei wählbare Adresse, ohne Tagesdeckel und ohne Freigabeklick (PO-Entscheid 21.11.2026);
+auch dort gibt es keine Anhänge, kein BCC und kein HTML. Es gibt kein `reply_all`. Beide
+laufen nur, wenn der Admin sie bei der Werkzeugauswahl wählt, ein Token das tool-genaue
+Recht trägt und Exchange der App die Rolle `Application Mail.Send` mit einem eigenen
+Bereich nur auf das Sende-Postfach gegeben hat. Eine App ohne diese Rolle kann nicht senden: Microsoft
 schreibt zur Rolle `Application Mail.ReadWrite` ausdrücklich *„Doesn't include permission
 to send mail."* Die Graph-API-Berechtigung `Mail.Send` wird **nie** erteilt.
 
+**Senden an feste Empfänger gibt es als eigenen, schmalen Weg:** Für feste Empfänger,
+festen Betreff und ein festes Postfach gibt es das Sende-Werkzeug `send_alert` einer
+installationsgebundenen Vorlage, mit eigener App und eigenem Credential; diese
+Vorlage und ihre App bleiben davon unberührt, siehe
+(Produkt-Doku, nicht öffentlich).
+
 **Bestätigung (heute, Fassung 2.0.2):** Alle Schreibwerkzeuge dieser
-Integration (`create_draft`, seit 3.0.0 `reply` und die drei Go-nativen unten) sagen der KI
+Integration (`create_draft`, seit 3.0.0 `reply`, seit 4.0.0 `send_mail` und die drei Go-nativen unten) sagen der KI
 dasselbe: Sie sind als Schreibvorgang annotiert, der Client kann deshalb
 nachfragen, JanuaPort selbst fragt nie, und sie brauchen das tool-genaue
 Recht. Der frühere Satz „a human must confirm it … do not call it
@@ -744,10 +752,11 @@ Teil davon bestätigt; was er nicht berührt hat, bleibt hier offen benannt:
 
 ## 11. Antworten (Opt-in): das Werkzeug `reply`
 
-Seit Fassung **3.0.0** (PO-Entscheid 14.11.2026) gibt es einen Sendeweg, und
-nur diesen: `reply` beantwortet **eine** vorhandene Nachricht, **nur an deren
-Absender**. Es gibt weder `reply_all` noch ein freies `send_mail`, kein Weiterleiten,
-keine Anhänge und keine frei wählbaren Empfänger. Alle anderen Werkzeuge dieser
+Seit Fassung **3.0.0** gibt es einen Sendeweg, der an
+die vorhandene Mail gebunden ist: `reply` beantwortet **eine** vorhandene Nachricht,
+**nur an deren Absender**, ohne `reply_all`, ohne Weiterleiten, ohne Anhänge und ohne
+frei wählbare Empfänger. Für eine neue Mail an eine frei gewählte Adresse gibt es seit
+4.0.0 das eigene Werkzeug `send_mail` (Abschnitt 12). Alle anderen Werkzeuge dieser
 Vorlage senden nichts. Standard ist **aus**: `reply` läuft nur, wenn ein Admin es
 ausdrücklich wählt (11.3) und ein Token das tool-genaue Recht trägt.
 
@@ -827,8 +836,8 @@ Aufruf abgelehnt wurde — deshalb beide Proben.
   (REST und Admin-MCP: `add_tools`). Ohne diese Angabe wird das neue Werkzeug nur
   gemeldet. `--mit-neuen-werkzeugen` übernimmt dagegen **alle** neuen Werkzeuge der Vorlage.
 - **⚠️ `jnpt connector add --file`** übernimmt **alle Werkzeuge der Datei**, also auch
-  `reply`. Wer die Datei der Vorlage unverändert lädt und `reply` nicht will, entfernt den
-  Block `- name: reply` vorher.
+  `reply` und `send_mail`. Wer die Datei der Vorlage unverändert lädt und eines der beiden
+  nicht will, entfernt den Block `- name: reply` bzw. `- name: send_mail` vorher.
 - **Das Recht ist tool-genau:** `jnpt token allow <token-id> microsoft-graph-mail:reply`
   (bei einer Integration mit anderem Namen deren Name). Ein Scope auf die ganze Integration
   erfasst `reply` nicht, und das Recht auf `reply` öffnet auch `create_draft` nicht.
@@ -869,6 +878,80 @@ Der Probelauf nach jeder neuen Fassung:
   melden: Das ist der Auslöser, eine Prüfung in den Kern zu holen.
 - **Der Inhalt** der Antwort kommt aus dem Zugriff der KI auf das Postfach. Deshalb 11.1.
 - **Keine Zusage über die Zustellung.** 202 heißt, Graph hat die Antwort angenommen.
+
+## 12. Senden an freie Empfänger (Opt-in): das Werkzeug `send_mail`
+
+Seit Fassung **4.0.0** (PO-Entscheid 21.11.2026: voller Zugriff, auch an andere senden, ohne Tageslimit) gibt es neben `reply` ein
+zweites Sendewerkzeug: `send_mail` sendet **eine neue Mail** an eine frei wählbare
+Adresse, optional mit einer Kopie (`cc`), ohne Tagesdeckel. Es gibt **keinen
+Freigabeklick**, und die Empfänger sind nicht auf eine Liste beschränkt. Der Text ist
+Klartext; es gibt kein HTML, keine Anhänge, kein BCC und keine Antwortadresse. `to` ist
+genau **eine** Adresse und `cc` höchstens **eine** (das Spec-Format erzeugt aus einem
+Parameter keine Listeneinträge). Für die Antwort auf eine vorhandene Mail bleibt `reply`
+der Weg, für eine Mail, die ein Mensch prüfen soll, `create_draft`.
+
+Der Body ist genau festgelegt: `message` mit Betreff, Text, `toRecipients` und optional
+`ccRecipients`, dazu `saveToSentItems: true`. Ohne `saveToSentItems` gäbe es nirgends
+einen Beleg, weil das Audit den Text schwärzt. Fehlt `cc`, entfällt `ccRecipients` ganz.
+
+### 12.1 Die Grenze: Exchange-Rolle mit eigenem Scope, tool-genaues Recht
+
+- **Exchange:** `Mail.Send` gibt es auch hier **nur als Exchange-Rolle**
+  `Application Mail.Send` über RBAC for Applications, mit einem **eigenen Management Scope**
+  allein auf das Sende-Postfach (Befehle wie in 11.2) — **keine Graph-API-Berechtigung**
+  `Mail.Send`. Das ist die eigentliche Grenze: `mailbox` ist ein Parameter, den die KI
+  wählt, und ein anderes als das freigegebene Postfach lehnt Exchange mit 403 ab.
+- **Opt-in:** `send_mail` wird bei der Neuanlage **nicht vorgewählt**; der Admin hakt es
+  ausdrücklich an (REST und Admin-MCP verlangen ohnehin eine Werkzeugliste). Bei einer
+  Anhebung kommt es nur mit `jnpt connector upgrade <name> --werkzeug send_mail --yes`
+  bzw. `add_tools` auf die Integration. Ein `jnpt connector add --file` übernimmt **alle
+  Werkzeuge der Datei**, also auch `send_mail`; wer es nicht will, entfernt den Block
+  `- name: send_mail` vorher.
+- **Das Recht ist tool-genau:** `jnpt token allow <token-id> microsoft-graph-mail:send_mail`
+  (bei einer Integration mit anderem Namen deren Name). Ein Scope auf die ganze
+  Integration erfasst `send_mail` nicht, und das Recht auf `reply` oder `create_draft`
+  öffnet es nicht.
+- **Geteiltes Credential:** Eine Installation kann das Credential mit der Fehlerwache
+  teilen (gleiche App, gleicher Scope auf genau ein Postfach), siehe
+  (Produkt-Doku, nicht öffentlich); wer den
+  Management Scope der App ändert, ändert damit beide Installationen.
+- **Das Token** einer solchen Installation trägt nur `<integration>:send_mail`; der
+  Klartext liegt allein in einer Datei auf dem Rechner des Betreibers (Zugriff nur für den
+  Benutzer) und nie in einem Repo, und im Probelauf-Vermerk steht nur die Token-ID.
+
+### 12.2 Was im Audit steht — und was nicht
+
+Postfach, Empfänger und Betreff (`mailbox`, `to`, `cc`, `subject`) stehen im Klartext
+im Audit, damit jede Mail zurechenbar bleibt; ein geschwärztes `cc` versteckte einen
+Empfänger. Geschwärzt ist allein der Text (`content`). Den Wortlaut belegen „Gesendete
+Elemente“ des Postfachs. Die Redaktionsliste der Vorlage ist genau `content` und `comment`.
+
+### 12.3 Probelauf: ein echter Versand und eine Gegenprobe
+
+`send_mail` hat **kein `dry_run`** (bewusste Ausnahme; sie steht im Kopf der Vorlage).
+Der Probelauf nach jeder neuen Fassung, nach der Wirkzeit der Richtlinie (Schritt 4):
+
+1. **Ein echter Versand** an ein **eigenes Postfach** des Betreibers. Erwartet: das Ergebnis
+   `{"status": 202}`, ein Audit-Eintrag mit Status `ok` und Empfänger und Betreff im
+   Klartext, aber ohne Text, und die Mail in **„Gesendete Elemente“** des Sende-Postfachs.
+2. **Gegenprobe:** `send_mail` mit einem **zweiten, nicht freigegebenen Postfach** als
+   `mailbox`. Erwartet: **403**. Bei 202 nicht weitermachen und die Rolle, den Scope und
+   die Entra-Zustimmung prüfen. Die Uhrzeit der Probe und die Klasse
+   der Antwort gehören in den Vermerk.
+
+### 12.4 Ehrliche Grenzen
+
+- **Freie Empfänger heißt frei.** Der Kern prüft keine Adresse und keine Domain. Ein
+  falsch angeleitetes Modell kann an jede Adresse senden, auch mit Inhalten, die es über
+  andere Tokens derselben Sitzung gelesen hat (angenommen mit dem PO-Entscheid vom
+  21.11.2026). Begrenzt wird das durch den Exchange-Scope auf **ein** Postfach, durch das
+  tool-genaue Recht und durch den Beleg in „Gesendete Elemente“.
+- **Ein Fehler wird nicht blind wiederholt:** Er kann die Mail doppelt senden. Erst in
+  „Gesendete Elemente“ nachsehen.
+- **Empfehlung (keine Regel, der Betreiber entscheidet):** das eigene Postfach als `cc`
+  in jede Mail setzen oder in Exchange eine Transportregel mit Kopie an ein menschliches
+  Postfach anlegen. Dann sieht ein Mensch jede gesendete Mail sofort.
+- **Keine Zusage über die Zustellung.** 202 heißt, Graph hat die Mail angenommen.
 
 ## Beilage: fertiges Skript für Schritt 4 (Variante A)
 

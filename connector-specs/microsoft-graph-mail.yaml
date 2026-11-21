@@ -1,8 +1,9 @@
 # Microsoft 365 Postfach über Microsoft Graph (v1.0) — lesen, Anhänge als TEXT
-# lesen, Entwurf anlegen, auf EINE vorhandene Nachricht antworten (Opt-in).
-# Senden gibt es NUR als Antwort über `reply` (PO-Entscheid 14.11.2026; zuvor:
-# kein Versand, Story #332, PO-Entscheid #329). Kein send_mail, kein reply_all,
-# kein Weiterleiten, keine Anhänge, keine freien Empfänger.
+# lesen, Entwurf anlegen, auf EINE vorhandene Nachricht antworten und eine neue
+# Mail an freie Empfänger senden (beides Opt-in).
+# Senden gibt es über `reply` (PO-Entscheid 14.11.2026) und über `send_mail`
+# (PO-Entscheid 21.11.2026: freie Empfänger, kein Tagesdeckel, kein
+# Freigabeklick). Kein reply_all, kein Weiterleiten, keine Anhänge, kein BCC.
 #
 # API:        https://graph.microsoft.com
 # Doku:       Nachrichten auflisten
@@ -17,6 +18,14 @@
 #             https://learn.microsoft.com/en-us/graph/api/user-post-messages?view=graph-rest-1.0
 #             Auf eine Nachricht antworten
 #             https://learn.microsoft.com/en-us/graph/api/message-reply?view=graph-rest-1.0
+#             Neue Mail senden
+#             https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0
+#             Nachricht verschieben (Go-natives move_message)
+#             https://learn.microsoft.com/en-us/graph/api/message-move?view=graph-rest-1.0
+#             Lesestatus setzen (PATCH)
+#             https://learn.microsoft.com/en-us/graph/api/message-update?view=graph-rest-1.0
+#             Ordner auflisten (Anzeigename → Ordner-ID)
+#             https://learn.microsoft.com/en-us/graph/api/user-list-mailfolders?view=graph-rest-1.0
 #             App-only-Token (Client-Credentials)
 #             https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow
 # Anleitung:  docs/connector-microsoft-graph-mail.md (App-Registrierung, Consent,
@@ -40,10 +49,10 @@
 # Entwürfe anlegen" — `Mail.ReadWrite` erlaubt in Graph auch Ändern und Löschen
 # von Mails. Wer die App-Registrierung im Portal ansieht, sieht also diese
 # gröbere Zahl. Verengt wird an zwei anderen Stellen:
-#   * bei UNS auf genau diese sechs Tools (deny-by-default, tool-genauer Scope für
+#   * bei UNS auf genau diese sieben Tools (deny-by-default, tool-genauer Scope für
 #     jeden Schreibweg, jeder Aufruf im Audit),
 #   * in EXCHANGE auf genau ein Postfach (s. o.).
-# Die Anhänge (#703) brauchen KEINE neue Berechtigung: `GET …/attachments` und
+# Die Anhänge brauchen KEINE neue Berechtigung: `GET …/attachments` und
 # `GET …/attachments/{id}/$value` genügen laut Doku app-only `Mail.Read` — davon
 # ist `Mail.ReadWrite` die Obermenge. Kein neuer Consent, kein Handgriff beim
 # Kunden.
@@ -52,44 +61,58 @@
 # send mail." Genau deshalb reicht sie für den Entwurfs-Pfad, und ohne weiteres
 # Recht kann die App nichts versenden.
 #
-# ⚠️ SENDEN NUR ALS ANTWORT, NUR ALS OPT-IN. `reply` beantwortet EINE
-# vorhandene Nachricht, nur an deren Absender (Graph adressiert an `replyTo`,
-# wenn das Feld gesetzt ist, sonst an `from`). Die Invariante „diese Vorlage
-# sendet nicht" gilt damit nur noch für alle anderen Werkzeuge. Drei Bremsen:
-#   * Werkzeugauswahl: `reply` kommt nur auf eine Integration, wenn der Admin es
-#     ausdrücklich wählt (Neuanlage in GUI, REST, Admin-MCP; bei einer Anhebung
-#     `--werkzeug reply` bzw. `add_tools`). Ein `jnpt connector add --file`
-#     übernimmt dagegen alle Werkzeuge der Datei.
-#   * tool-genaues Recht `microsoft-graph-mail:reply`: Ein instanzweiter Scope
-#     erfasst es nicht.
+# ⚠️ SENDEN NUR ALS OPT-IN: `reply` UND `send_mail`. `reply`
+# beantwortet EINE vorhandene Nachricht, nur an deren Absender (Graph adressiert an
+# `replyTo`, wenn das Feld gesetzt ist, sonst an `from`). `send_mail` sendet eine
+# NEUE Mail an einen frei wählbaren Empfänger (`to`, optional ein `cc`) — freie
+# Empfänger, kein Tagesdeckel, kein Freigabeklick (PO-Entscheid 21.11.2026). Die
+# Invariante „diese Vorlage sendet nicht" gilt damit nur noch für alle anderen
+# Werkzeuge. Drei Bremsen, für beide Werkzeuge gleich:
+#   * Werkzeugauswahl: `reply` und `send_mail` kommen nur auf eine Integration,
+#     wenn der Admin sie ausdrücklich wählt (Neuanlage in GUI, REST, Admin-MCP;
+#     bei einer Anhebung `--werkzeug send_mail` bzw. `add_tools`). Ein `jnpt
+#     connector add --file` übernimmt dagegen alle Werkzeuge der Datei.
+#   * tool-genaues Recht `microsoft-graph-mail:reply` bzw.
+#     `microsoft-graph-mail:send_mail`: Ein instanzweiter Scope erfasst sie nicht.
 #   * `Mail.Send` gibt es NUR als Exchange-Rolle `Application Mail.Send` über RBAC
 #     for Applications, mit einem EIGENEN Management Scope allein auf das
-#     Anfrage-Postfach — nie als Graph-API-Berechtigung (sie gälte für ALLE
-#     Postfächer des Mandanten) und nie mit demselben Scope wie fürs Lesen.
-#     Anleitung: docs/connector-microsoft-graph-mail.md, Abschnitt „Antworten
-#     (Opt-in)".
-# Dazu `daily_cap: 10` je UTC-Tag und der Antworttext in `redact_params`; den
-# Wortlaut belegen „Gesendete Elemente" des Postfachs.
+#     Sende-Postfach — nie als Graph-API-Berechtigung (sie gälte für ALLE
+#     Postfächer des Mandanten) und nie mit demselben Scope wie fürs Lesen. Diese
+#     Grenze trägt `send_mail`: `mailbox` ist ein Parameter, den die KI wählt; ein
+#     anderes als das freigegebene Postfach lehnt Exchange mit 403 ab.
+#     Anleitung: docs/connector-microsoft-graph-mail.md, Abschnitte „Antworten
+#     (Opt-in)" und „Senden an freie Empfänger (Opt-in)".
+# Beleg und Audit: Inhalt (`content`, `comment`) steht in `redact_params`; Empfänger,
+# Kopie, Betreff und Postfach bleiben im Klartext. Den Wortlaut belegen „Gesendete
+# Elemente" des Postfachs, deshalb steht `saveToSentItems: true` fest im Body von
+# `send_mail`. Der Body von `send_mail` ist genau festgelegt: `message`
+# mit subject, body (Text), toRecipients, optional ccRecipients — nie
+# bccRecipients, from, sender, replyTo oder attachments.
+# Ehrliche Restlücke (PO-Entscheid 21.11.2026): Eine KI mit weiteren Tokens derselben Sitzung
+# kann gelesene Inhalte über `send_mail` an jeden senden; das hat der PO mit „voller
+# Zugriff" angenommen.
 #
-# ⚠️ KEIN dry_run (bewusste Ausnahme): `reply` hat keinen Trockenlauf. Der
-# trockene Pfad ist `get_message` auf einer Testmail (zeigt `from`, `replyTo` und
-# `ccRecipients`); danach folgt EINE echte Antwort auf eine Testmail aus einem
-# eigenen Testpostfach, mit Blick in „Gesendete Elemente".
+# ⚠️ KEIN dry_run (bewusste Ausnahme): `reply` und `send_mail` haben keinen
+# Trockenlauf. Der trockene Pfad von `reply` ist `get_message` auf einer Testmail
+# (zeigt `from`, `replyTo` und `ccRecipients`); danach folgt EINE echte Antwort auf
+# eine Testmail aus einem eigenen Testpostfach, mit Blick in „Gesendete Elemente".
+# Bei `send_mail` ist der Probelauf EIN echter Versand an ein eigenes Postfach samt
+# Gegenprobe mit einem zweiten, nicht freigegebenen Postfach als `mailbox` (403).
 #
-# ENVELOPE-ABGLEICH gegen die Graph-Doku (#73-Lehre — die Runtime-Header sind
-# Runtime-Sache, die fachlichen deklariert die Spec seit #347):
+# ENVELOPE-ABGLEICH gegen die Graph-Doku (die Runtime-Header sind
+# Runtime-Sache, die fachlichen deklariert die Spec):
 #   * `Authorization: Bearer <token>` — Doku-Pflicht; die Runtime setzt ihn aus
-#     `auth.template`, der Token kommt aus dem app-only Token-Austausch.
-#   * `Accept: application/json` — die Runtime setzt ihn auf JEDEN Request
-#     (#73). Graph verlangt ihn nicht, es schadet aber nicht: Graph antwortet
-#     ohnehin JSON. AUSNAHME `read_attachment` (#703): Dort steht ein statischer
+#     `auth.template`, der Token kommt app-only aus dem Token-Austausch.
+#   * `Accept: application/json` — die Runtime setzt ihn auf JEDEN Request.
+#     Graph verlangt ihn nicht, es schadet aber nicht: Graph antwortet
+#     ohnehin JSON. AUSNAHME `read_attachment`: Dort steht ein statischer
 #     `Accept: */*` am Werkzeug und überlagert den Default — die Antwort ist
 #     dort eine DATEI, kein JSON.
 #   * `Content-Type: application/json` — Doku-Pflicht beim POST; kommt aus
 #     `encoding: json` (nie aus der Spec).
 #   * `Content-Length` — Doku nennt ihn beim POST; Go setzt ihn selbst, weil der
 #     Body ein `bytes.Buffer` mit bekannter Länge ist.
-#   * `Prefer: outlook.body-content-type="text"` — steht seit #347 als statischer
+#   * `Prefer: outlook.body-content-type="text"` — steht als statischer
 #     Header am Tool `get_message` (das Format kann das jetzt). Damit BITTET der
 #     Aufruf um einen Klartext-Body statt HTML. `Prefer` ist eine Bitte: Graph
 #     darf sie übergehen und antwortet dann ggf. mit `Preference-Applied`; was
@@ -109,47 +132,43 @@
 # parameterlosen Probe-Aufruf — `jnpt connector check` endet für diesen Connector
 # nach Stufe 2 (Spec gültig, Credential im Vault vorhanden), und `jnpt connector
 # selftest` überspringt ihn. Der Live-Beleg läuft deshalb über einen echten
-# Tool-Call (Issue #344), nicht über die Probe.
+# Tool-Call, nicht über die Probe.
 #
-# ⚠️ `contentBytes` STEHT ABSICHTLICH NIRGENDS (#703). Beim Auflisten der
+# ⚠️ `contentBytes` STEHT ABSICHTLICH NIRGENDS. Beim Auflisten der
 # Anhänge liefert Graph dieses Feld — die vollständige base64-Nutzlast JEDER
 # Datei — von sich aus MIT, wenn man kein `$select` setzt. Eine Mail mit drei
 # PDFs risse damit das Antwortlimit, und eine KI kann mit base64 ohnehin nichts
 # anfangen. `list_attachments` trägt deshalb ein FESTES `$select` ohne dieses
 # Feld, und keine Projektion nennt es. Wer es „nachrüsten" will: Der Weg zum
 # Inhalt heißt `read_attachment`, und der liefert TEXT. Ein Wächter-Test
-# (Produkt-Doku, nicht öffentlich) hält beide Richtungen fest.
+# hält beide Richtungen fest.
 #
-# BEWUSST NICHT DRIN (Scope-Grenzen #332, nachgezogen in #703): kein
-# send_mail an neue Empfänger, kein reply_all, kein Weiterleiten,
+# BEWUSST NICHT DRIN (Scope-Grenzen): kein
+# BCC, kein HTML, kein reply_all, kein Weiterleiten,
 # kein ANHÄNGEN von Dateien an einen Entwurf, kein Herunterladen von Anhängen als
 # Datei (die KI bekommt TEXT, nie Bytes und nie einen Link), kein OCR für
 # gescannte PDFs, keine Sammel-Abrufe („alle Anhänge aller Mails" — ein Anhang je
 # Aufruf), kein Kalender/SharePoint/Teams, keine Pagination-Automatik (der Agent
 # paginiert über Parameter), kein `privacy:`-Block (die Bewertung, welche Felder
-# pseudonymisiert gehören, ist eine eigene Story — #328; das Feld `text` von
+# pseudonymisiert gehören, ist eine eigene Entscheidung; das Feld `text` von
 # read_attachment ist genau die Naht, an der sie ansetzt).
 #
-# ⚠️ ABGRENZUNG ZU `save_attachment` (Story #718, Baustein 1 aus #704): Die
-# obige Zusage — „die KI bekommt TEXT, nie Bytes und nie einen Link" — gilt
-# UNVERÄNDERT für `read_attachment`, das einzige Werkzeug DIESER Spec, das
-# einen Anhang überhaupt anfasst. `save_attachment` ist KEIN YAML-Werkzeug
-# dieser Datei — es existiert nicht in `tools:` unten und hat kein
-# `response`/`response_file`-Feld hier zu deklarieren. Es ist ein GO-NATIVES
-# Werkzeug, das denselben Sicherheitspfad wie read_attachment nutzt, nur
-# gestoppt VOR der Text-Extraktion) als Go-Funktion aufruft und die Bytes
-# serverseitig — nie über ein MCP-Feld — an eine konfigurierte
-# Schreibziel-Datei-Integration weiterreicht. Der Grund, warum es NICHT als
-# YAML-Tool dieser Spec geht: `write: true` verlangt `request.method: POST`
-# (Produkt-Doku, nicht öffentlich), der Byte-Abruf ist aber ein GET gegen Graph
-# — die Tool-SEMANTIK (Schreiben, Bestätigung, tool-genauer Scope) und die
-# HTTP-Methode (Lesen) laufen hier auseinander. Details:
-# Schreibpfad (Produkt-Doku, nicht öffentlich);
-# docs/connector-microsoft-graph-mail.md §9.
+# ⚠️ ABGRENZUNG ZU `save_attachment`: Die obige Zusage — „die KI bekommt TEXT,
+# nie Bytes und nie einen Link" — gilt UNVERÄNDERT für `read_attachment`, das
+# einzige Werkzeug DIESER Spec, das einen Anhang überhaupt anfasst.
+# `save_attachment` ist KEIN YAML-Werkzeug dieser Datei: Es steht nicht in
+# `tools:` unten. Es ist ein GO-NATIVES Werkzeug, das denselben Sicherheitspfad
+# wie `read_attachment` nutzt, nur gestoppt VOR der Text-Extraktion, und die
+# Bytes serverseitig — nie über ein MCP-Feld — an eine konfigurierte
+# Schreibziel-Datei-Integration weiterreicht. Der Grund, warum es nicht als
+# YAML-Tool dieser Spec geht: `write: true` verlangt `request.method: POST`, der
+# Byte-Abruf ist aber ein GET gegen Graph — die Tool-SEMANTIK (Schreiben,
+# Bestätigung, tool-genauer Scope) und die HTTP-Methode (Lesen) laufen hier
+# auseinander. Details: docs/connector-microsoft-graph-mail.md §9.
 #
 # Drei zusätzliche Go-native Schreibwerkzeuge stehen nicht in dieser YAML-Spec:
 # save_attachment, move_message und mark_read. Sie verlangen jeweils einen
-# tool-genauen Scope; die sechs YAML-Werkzeuge und Fassung 3.0.0 bleiben gleich.
+# tool-genauen Scope; die sieben YAML-Werkzeuge und Fassung 4.0.0 bleiben gleich.
 # move_message gibt die aktuelle ID als message_id zurück. Nur ein Ordnerwechsel
 # ändert die ID; im selben Ordner bleibt sie gültig. Fehlt Graphs id, wird Erfolg
 # mit einem Hinweis auf list_messages gemeldet. Nur id wird aus der Graph-Antwort
@@ -157,26 +176,33 @@
 # Betreiber-Anleitung: docs/connector-microsoft-graph-mail.md.
 
 name: microsoft-graph-mail
-# Fassung dieser Vorlage (Story #427) — siehe demo-erp.yaml für die Bedeutung.
-# 2.0.0 (#703): ZWEI NEUE WERKZEUGE sind eine Flächen-Änderung, und der
-# Flächen-Wächter (Produkt-Doku, nicht öffentlich) weist eine PATCH-/MINOR-Anhebung
+# Fassung dieser Vorlage — siehe demo-erp.yaml für die Bedeutung.
+# 2.0.0: ZWEI NEUE WERKZEUGE sind eine Flächen-Änderung, und der
+# Flächen-Wächter weist eine PATCH-/MINOR-Anhebung
 # dafür fail-closed ab.
-# 2.0.1: NUR die Beschreibung von read_attachment — es liest jetzt auch Word,
-# Excel und PowerPoint (docx/xlsx/pptx). Keine Flächen-Änderung, deshalb PATCH
-# (reine Beschreibung ist ein Fix).
-# 2.0.2: NUR die Beschreibung von create_draft — Kernsatz statt „a human must
-# confirm", ohne „do not call it autonomously". Fix, deshalb PATCH.
+# 2.0.1: NUR die Beschreibung von read_attachment — es liest jetzt
+# auch Word, Excel und PowerPoint (docx/xlsx/pptx). Keine Flächen-Änderung,
+# deshalb PATCH (reine Beschreibung ist ein Fix).
+# 2.0.2: NUR die Beschreibung von create_draft — Kernsatz statt „a
+# human must confirm", ohne „do not call it autonomously". Fix, deshalb PATCH.
 # 2.0.3: read_attachment beschreibt versteckte Textabschnitte und Zähler.
-# 3.0.0: NEUES WERKZEUG `reply` (Antwort auf eine vorhandene Nachricht, Opt-in) =
-# Flächen-Änderung, deshalb MAJOR. Dazu: get_message projiziert zusätzlich
-# `replyTo`; die Texte von create_draft und der Spec nennen den Sendeweg `reply`;
-# `comment` steht in `redact_params`.
-version: "3.0.0"
+# 3.0.0: NEUES WERKZEUG `reply` (Antwort auf eine vorhandene Nachricht,
+# Opt-in) = Flächen-Änderung, deshalb MAJOR. Dazu: get_message projiziert
+# zusätzlich `replyTo`; die Texte von create_draft und der Spec nennen den
+# Sendeweg `reply`; `comment` steht in `redact_params`.
+# 4.0.0: NEUES WERKZEUG `send_mail` (neue Mail an freie Empfänger, Opt-in,
+# ohne Tagesdeckel) = Flächen-Änderung. MAJOR, nicht MINOR: Der Flächen-Wächter
+# (DimToolAdded) weist eine MINOR-Anhebung fail-closed ab, sobald die
+# abgeleitete Spec das Werkzeug trägt, und genau das tut `connector upgrade
+# --werkzeug send_mail`. Dazu: die Texte von create_draft und der Spec nennen
+# `send_mail` als zweiten Sendeweg. `redact_params` bleibt [content, comment].
+version: "4.0.0"
 description: >
   Microsoft 365 mailbox via Microsoft Graph: read the messages of ONE mailbox,
-  read the TEXT CONTENT of their attachments, put a draft into it, and reply to
-  one existing message (opt-in, to its sender only). App-only access; reply is
-  the only tool of this connector that sends mail.
+  read the TEXT CONTENT of their attachments, put a draft into it, reply to one
+  existing message (opt-in, to its sender only) and send a new mail to a recipient
+  of your choice (opt-in, send_mail). App-only access; reply and send_mail are the
+  tools of this connector that send mail.
 base_url: https://graph.microsoft.com
 
 auth:
@@ -202,11 +228,15 @@ timeout: 30s
 min_interval: 200ms
 
 # Der Entwurfstext ist Freitext und kann personenbezogene Daten tragen; er hat im
-# Audit-Log keinen diagnostischen Wert. `mailbox`, `recipient` und `subject`
+# Audit-Log keinen diagnostischen Wert. (Gilt auf der Protokolltiefe „Metadaten",
+# dem Default — ab „Abfragen" steht er im Inhalt des Protokolls.) `mailbox`, `recipient` und `subject`
 # bleiben bewusst im Klartext — nur so bleibt ein Schreibvorgang zurechenbar
 # („Entwurf an X mit Betreff Y in Postfach Z").
 # `comment` ist der Antworttext von `reply`: ebenfalls Freitext, ebenfalls
 # nicht im Audit. Den Wortlaut belegt „Gesendete Elemente" im Postfach.
+# `content` deckt auch `send_mail`. `to`, `cc`, `subject` und `mailbox`
+# bleiben dort im Klartext: Ein geschwärztes `cc` versteckte einen
+# Empfänger. Die Liste bleibt genau [content, comment].
 redact_params: [content, comment]
 
 tools:
@@ -326,7 +356,7 @@ tools:
     # ehrliche Antwort auf „gibt es mehr?", ohne dass JanuaPort automatisch
     # paginiert.
     # Jede Nachricht wird zusätzlich auf genau die im Tool-Text genannten Felder
-    # projiziert (#368): `$select` verengt nur die FACHLICHEN Felder — die
+    # projiziert: `$select` verengt nur die FACHLICHEN Felder — die
     # OData-Metafelder setzt Graph unabhängig davon, live trägt jedes
     # Nachrichten-Objekt ein `@odata.etag`. Ein undeklariertes Antwortfeld liefe
     # an der Pseudonymisierung vorbei, deshalb schneidet die Projektion es ab.
@@ -373,7 +403,7 @@ tools:
           the URL itself.
         type: string
         required: true
-    # Statischer Request-Header (#347), nur für dieses Tool: Graph liefert
+    # Statischer Request-Header, nur für dieses Tool: Graph liefert
     # Nachrichten-Bodies sonst als HTML. `Prefer` ist eine BITTE — Graph darf sie
     # übergehen; was ankam, steht in `body.contentType` (und ggf. im
     # Antwort-Header `Preference-Applied`, den JanuaPort nicht auswertet). Am
@@ -389,7 +419,7 @@ tools:
       query:
         - name: "$select"
           value: "id,receivedDateTime,sentDateTime,subject,from,replyTo,toRecipients,ccRecipients,hasAttachments,bodyPreview,body,webLink"
-    # Projektion auf genau die im Tool-Text genannten Felder (#368). `$select`
+    # Projektion auf genau die im Tool-Text genannten Felder. `$select`
     # allein reicht dafür NICHT: Es verengt die FACHLICHEN Felder, die
     # OData-Metafelder setzt Graph unabhängig davon — live kamen `@odata.context`
     # und `@odata.etag` zusätzlich durch. Abschneiden muss sie deshalb die
@@ -437,7 +467,7 @@ tools:
         # Diese Zeile ist der einzige Grund, warum das Auflisten billig ist.
         - name: "$select"
           value: "id,name,contentType,size,isInline,lastModifiedDateTime"
-    # Projektion auf genau die im Tool-Text genannten Felder (#368). `@odata.type`
+    # Projektion auf genau die im Tool-Text genannten Felder. `@odata.type`
     # bleibt bewusst drin und heißt hier `type`: Es ist die Auskunft, ob
     # read_attachment überhaupt gehen kann. Die übrigen OData-Metafelder
     # (`@odata.context`, `@odata.etag`, `@odata.mediaContentType`) setzt Graph
@@ -509,7 +539,7 @@ tools:
       # ohne `$value` lieferte JSON mit `contentBytes` (base64) — dreifacher
       # Speicher, nichts gewonnen.
       path: /v1.0/users/{mailbox}/messages/{message_id}/attachments/{attachment_id}/$value
-    # Die Antwort ist eine DATEI, keine JSON (#703). Die Runtime liest die Bytes
+    # Die Antwort ist eine DATEI, keine JSON. Die Runtime liest die Bytes
     # mit einem eigenen Deckel, hält sie nur im Speicher und liefert den daraus
     # gewonnenen TEXT. Die Bytes berühren nie Platte, Log oder Audit.
     response_file:
@@ -520,8 +550,9 @@ tools:
       Creates a DRAFT email in the mailbox. The draft is saved to the Drafts
       folder and is NOT SENT — nothing leaves the mailbox. This tool does not
       send mail: a human opens the draft in Outlook, checks it and clicks Send.
-      The only tool of this connector that sends is reply, which answers one
-      existing message. Never report to a user that a mail "was sent" for a
+      The tools of this connector that send are reply, which answers one
+      existing message, and send_mail, which sends a new mail at once without a
+      draft. Never report to a user that a mail "was sent" for a
       draft; report that a draft is ready for review, and pass on the returned
       web_link so they can open it.
       This is a WRITE action. It is annotated as such, so your client may ask
@@ -642,3 +673,83 @@ tools:
     # Kein `response`: Graph antwortet mit 202 und leerem Body, die Laufzeit meldet
     # das als Erfolg mit {"status": 202}. Ein Ausdruck griffe im Leerfall
     # nicht.
+
+  # `send_mail` (PO-Entscheid 21.11.2026: voller Zugriff, auch an andere senden, ohne
+  # Tageslimit): eine NEUE Mail an
+  # einen frei wählbaren Empfänger, ohne `daily_cap`, ohne Freigabeklick.
+  # Empfängerform: Das Format hat „Listen mit fester Länge" (docs/connector-spec.md,
+  # Grenzen v1) und erzeugt aus einem Parameter keine Listeneinträge. `to` ist
+  # deshalb genau EINE Adresse und `cc` höchstens EINE; mehr Empfänger bräuchten
+  # eine Kernänderung und sind nicht Teil dieser Fassung.
+  - name: send_mail
+    description: >
+      Sends ONE new email from the mailbox to the recipient you give, and
+      optionally one CC recipient, immediately. The mail leaves the mailbox as soon
+      as the call is made: it is not a draft and no human checks it first. A copy
+      stays in the Sent Items folder of the mailbox. The body is PLAIN TEXT: no
+      HTML, no attachments, no BCC, no reply-to.
+      Check the recipient addresses exactly before you call it, because the mail
+      goes to the address as written.
+      On success the result is {"status": 202}: the mail is sent and the service
+      returns no further data, so no second call is needed. A failed call is not
+      repeated blindly: it can send the mail twice. Look into the Sent Items
+      folder of the mailbox first.
+      Only mailboxes that the tenant released for the app can send; Exchange
+      refuses any other mailbox with 403.
+      To answer an existing message, reply is the way: it addresses the sender of
+      that message. create_draft prepares a mail for a human to check and send.
+      This is a WRITE action. It is annotated as such, so your client may ask the user; JanuaPort itself never asks. It needs the tool-exact permission "microsoft-graph-mail:send_mail"; a connector-wide scope does NOT grant it.
+      It runs without a chat question once a human approved this process at setup (use case and AI mandate); the tool-exact permission is the boundary.
+    write: true
+    params:
+      - name: mailbox
+        description: >
+          Required. The mailbox the mail is sent from, as its email address, e.g.
+          "rechnungen@example.com". Only the one released mailbox is reachable.
+        type: string
+        required: true
+      - name: to
+        description: >
+          Required. The email address of the single recipient, e.g.
+          "kunde@example.com". The mail goes to this address as written.
+        type: string
+        required: true
+      - name: cc
+        description: >
+          Optional. The email address of a single CC recipient. Leave it out for
+          no CC.
+        type: string
+      - name: subject
+        description: Required. The subject line of the mail.
+        type: string
+        required: true
+      - name: content
+        description: >
+          Required. The body of the mail as PLAIN TEXT (line breaks are kept, HTML
+          markup is not interpreted). This text is deliberately not written to the
+          audit log.
+        type: string
+        required: true
+    request:
+      method: POST
+      path: /v1.0/users/{mailbox}/sendMail
+      encoding: json
+      # Genau diese Schlüssel: kein bccRecipients, from, sender, replyTo,
+      # attachments. `saveToSentItems: true` bleibt fest, sonst gäbe es nirgends
+      # einen Beleg: Das Audit schwärzt content. Fehlt `cc`, entfällt
+      # `ccRecipients` ganz (Weggelassene Werte).
+      body_json:
+        message:
+          subject: "{subject}"
+          body:
+            contentType: Text
+            content: "{content}"
+          toRecipients:
+            - emailAddress:
+                address: "{to}"
+          ccRecipients:
+            - emailAddress:
+                address: "{cc}"
+        saveToSentItems: true
+    # Kein `response`: Graph antwortet mit 202 und leerem Body, die Laufzeit meldet
+    # das als Erfolg mit {"status": 202}.
