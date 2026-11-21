@@ -209,11 +209,10 @@ sicher vergleichen ließen. **Immer in Anführungszeichen**, sonst liest YAML
 
 | Feld | Pflicht | Bedeutung |
 |---|---|---|
-| `header` | ja (außer bei `aws_sigv4`) | Name des HTTP-Headers, meist `Authorization`. |
-| `template` | ja (außer bei `aws_sigv4`) | Wert des Headers mit dem Platzhalter `{{credential}}`, z. B. `"Bearer {{credential}}"` oder `"{{credential}}"`. |
+| `header` | ja | Name des HTTP-Headers, meist `Authorization`. |
+| `template` | ja | Wert des Headers mit dem Platzhalter `{{credential}}`, z. B. `"Bearer {{credential}}"` oder `"{{credential}}"`. |
 | `credential` | ja (außer bei den delegierten Typen) | **Name** des Secrets im Vault — nie das Secret selbst. Anlegen mit `jnpt credential set --name <name>` (siehe README). Bei `oauth2_on_behalf_of` und `oauth2_token_exchange` **verboten**. |
-| `type` | nein | Herkunft des Werts, der `{{credential}}` füllt. Weglassen = statisches Vault-Credential (Default, unverändertes Verhalten). `oauth2_client_credentials` = JanuaPort holt sich einen Access-Token selbst (siehe [App-only-Token](#app-only-token-authtype-oauth2_client_credentials)). `session_login` = JanuaPort meldet sich mit dem Passwort aus dem Vault an und nutzt die Sitzung (siehe [Session-Login](#session-login-authtype-session_login)). `oauth2_on_behalf_of` und `oauth2_token_exchange` = delegierte Identität: das SSO-Token der angemeldeten Person wird getauscht (siehe [Token-Tausch](#token-tausch-nach-rfc-8693-authtype-oauth2_token_exchange)). `aws_sigv4` = AWS mit SigV4 über AssumeRole, nur lesend (siehe [AWS](#aws-authtype-aws_sigv4)). |
-| `aws` | nur bei `aws_sigv4` | `region`, `service`, `access_key_id`, `role_arn`, bei FilterLogEvents `max_log_window` — siehe [AWS](#aws-authtype-aws_sigv4). Bei jedem anderen `type` ein Ladefehler. |
+| `type` | nein | Herkunft des Werts, der `{{credential}}` füllt. Weglassen = statisches Vault-Credential (Default, unverändertes Verhalten). `oauth2_client_credentials` = JanuaPort holt sich einen Access-Token selbst (siehe [App-only-Token](#app-only-token-authtype-oauth2_client_credentials)). `session_login` = JanuaPort meldet sich mit dem Passwort aus dem Vault an und nutzt die Sitzung (siehe [Session-Login](#session-login-authtype-session_login)). `oauth2_on_behalf_of` und `oauth2_token_exchange` = delegierte Identität: das SSO-Token der angemeldeten Person wird getauscht (siehe [Token-Tausch](#token-tausch-nach-rfc-8693-authtype-oauth2_token_exchange)). |
 | `audience` | nur bei `oauth2_token_exchange` | Die Ziel-Audience des Tauschs, **genau ein** Bezeichner ohne Leer- und Steuerzeichen (meist die Client-ID des Zielsystems beim Identitätsanbieter). Bei jedem anderen `type` ein Ladefehler. |
 
 Das Secret steht **niemals** in der Spec: Die Datei darf bedenkenlos eingecheckt
@@ -441,118 +440,6 @@ Ein `session`-Block ohne `type: session_login` ist ein Ladefehler, ebenso
   vor der Aktivierung ersetzt werden müssen (Null-GUID, wie bei OAuth2).
 - **Team-Integrationen** nutzen den gehärteten Client (nur öffentliche
   Ziele) — ein Service Layer im LAN geht nur im Besitz `corp`.
-
-## AWS (`auth.type: aws_sigv4`)
-
-Stufe 1, im Bau, **nur lesend**. JanuaPort signiert jede Anfrage mit
-Signature Version 4. Der Vault hält einen **Basisschlüssel**, der nur
-`sts:AssumeRole` auf eine Kundenrolle darf; JanuaPort holt damit kurzlebige
-Sitzungsschlüssel (fest 60 Minuten, nur im Speicher) und signiert damit.
-Einen statischen Modus gibt es nicht. Anleitung samt CloudFormation-Vorlage: (Produkt-Doku, nicht öffentlich).
-
-```yaml
-name: aws-termine
-version: "1.0.0"
-base_url: https://dynamodb.eu-central-1.amazonaws.com   # genau https://<service>.<region>.amazonaws.com
-instance:
-  - name: role_arn
-    label: Rollen-ARN der Leserolle
-    kind: text
-auth:
-  type: aws_sigv4
-  credential: aws-termine-basis          # Secret Access Key des Basisschlüssels (Vault)
-  aws:
-    region: eu-central-1
-    service: dynamodb                    # amplify | dynamodb | logs
-    access_key_id: AKIAJNPTBEISPIEL0001  # Key-ID des Basisschlüssels (kein Geheimnis)
-    role_arn: "{{instance.role_arn}}"    # Kundenrolle, als Instanzwert hinter target_address
-tools:
-  - name: get_termin
-    description: Liest genau einen Termin über seine ID aus der Tabelle termine.
-    params:
-      - {name: termin_id, description: ID des Termins, type: string, required: true}
-    headers:
-      X-Amz-Target: DynamoDB_20120810.GetItem   # konstant, aus der Leseliste
-    request:
-      method: POST
-      path: /
-      read_via_post: true
-      encoding: json
-      body_json:
-        TableName: termine                      # Konstante der Spec
-        Key:
-          pk:
-            S: "{termin_id}"                    # nur hier darf ein Parameter stehen
-```
-
-Regeln (beim Laden geprüft):
-
-- `header` und `template` sind verboten — den Kopf baut die Signatur. Die Region
-  wird streng geprüft (`^[a-z]{2}(-[a-z]+)+-\d$`), `base_url` ist genau der
-  Dienst-Host der Region; der STS-Host wird daraus abgeleitet und ist nie frei.
-- **Leseliste:** DynamoDB `GetItem` und `Query`, CloudWatch Logs
-  `FilterLogEvents` (je `POST /` mit `read_via_post`, `encoding: json` und
-  konstantem `X-Amz-Target` am Werkzeug) sowie Amplify `ListJobs`
-  (`GET /apps/<app>/branches/<branch>/jobs`, App und Branch konstant). Jedes
-  andere Target ist ein Ladefehler — ausdrücklich `ExecuteStatement` (PartiQL),
-  `Scan`, `StartQuery` und jedes Schreib-/Lösch-Target.
-- **Die Ressource ist Konstante der Spec.** Ein Werkzeug-Parameter darf nur
-  stehen unter `Key.<attr>.S|N` (GetItem), `ExpressionAttributeValues.<name>.S|N`
-  (Query) und `filterPattern` (FilterLogEvents). `TableName`, `IndexName`, alle
-  Ausdrücke, Log-Gruppen, `limit`/`Limit` und `nextToken` sind Konstanten;
-  `Limit` ist bei Query Pflicht, `limit` bei FilterLogEvents. Weil `nextToken`
-  konstant ist, liefert ein Werkzeug **nur die erste Seite**. Ein Platzhalter in
-  einem Feldnamen (Schlüssel) wird abgewiesen, nie ersetzt.
-- **Zeitfenster:** FilterLogEvents braucht `startTime`/`endTime` als
-  Pflicht-Parameter vom Typ `integer` (Millisekunden) und
-  `auth.aws.max_log_window` (höchstens 7 Tage). Ein größeres Fenster weist die
-  Laufzeit ab, sie kürzt nicht.
-- Keine weitere `X-Amz-*`-Kopfzeile, kein `write`, kein `response_file`, Besitz
-  nur `corp`.
-- Die **ExternalId** erzeugt die Anlage je Integration; sie steht nicht in der
-  Spec (Anzeige und Neu-Erzeugen: Admin-GUI, `GET/POST
-  /api/admin/integrations/{name}/aws-external-id[/rotate]`, Admin-MCP).
-
-### `tools[]`
-
-| Feld | Pflicht | Bedeutung |
-|---|---|---|
-| `name` | ja | Tool-Name (Kleinbuchstaben, Ziffern, Unterstrich; beginnt mit Buchstabe). Eindeutig innerhalb des Connectors. |
-| `description` | ja | **Wichtig:** Ein KI-Agent entscheidet allein anhand dieser Beschreibung, ob und wie er das Tool benutzt. Beschreibe, *was* zurückkommt, *welche* Filter es gibt, *Datumsformate* und *Pagination*. Englisch. |
-| `params` | nein | Eingabeparameter (siehe unten). |
-| `request` | ja | Der HTTP-Aufruf (siehe unten). |
-| `headers` | nein | **Statische Request-Header** nur für dieses Tool. Sie überlagern die gleichnamigen Header der obersten Ebene (siehe [Statische Request-Header](#statische-request-header-headers)). |
-| `response` | nein | JMESPath-Ausdruck, der die Antwort auf das Wesentliche projiziert. Ohne ihn wird die Antwort unverändert weitergegeben. |
-| `response_error` | nein | **Fehlerkennzeichen für 2xx**: JMESPath auf dem 2xx-JSON; Ergebnis genau `true` = der Aufruf ist ein `upstream_error`, alles andere ein Erfolg. Für Ziele, die einen Fehler mit HTTP 200 melden. Ungültiger Ausdruck = Ladefehler. Siehe [Fehler im 2xx-Body](#fehler-im-2xx-body-response_error). Änderung = mindestens MINOR. |
-| `response_error_message` | nein | JMESPath auf den Meldungstext des Fehlerkennzeichens, auf 200 Zeichen gedeckelt; nur ein String wird ausgegeben, nie der Body. Nur zusammen mit `response_error`. |
-| `response_file` | nein | Erklärt, dass die Antwort **eine Datei** ist und kein JSON. Die KI bekommt dann den daraus gewonnenen **Text** (siehe [Datei-Antwort](#datei-antwort-response_file)). Schließt `response` aus. |
-| `text_format` | nein | Textform des **Text-Blocks** der Antwort: `json` (Standard, = Feld weglassen) oder `toon`. Siehe [Textform des Text-Blocks](#textform-des-text-blocks-text_format). Schließt `response_file` aus; ein Wechsel ist MAJOR. |
-| `check` | nein | `true` markiert dieses Tool als Probe für `jnpt connector check`. Höchstens ein Tool pro Connector. |
-| `write` | nein | `true` markiert ein **schreibendes** (mutierendes) Tool. Erlaubt `request.method: POST` und verändert Berechtigung + Audit (siehe [Schreibende Tools](#schreibende-tools-write)). Default `false` = read-only. |
-| `freigabe` | nein | Menschliche SSO-Freigabe für write: true: vorschau benennt das lesende Vorschauwerkzeug, schluessel genau sämtliche Schreibparameter als erforderliche String-Felder. Ungültig = Ladefehler; Setzen/Ändern/Entfernen verlangt MAJOR. Siehe [Freigabepflicht](#freigabepflicht-freigabe). |
-| `daily_cap` | nein | **Tagesdeckel**: ganze Zahl > 0 = höchstens so viele Aufrufe dieses Schreibwerkzeugs je Integration und UTC-Tag. Nur mit `write: true` (sonst Ladefehler), nur in der Spec setzbar. Fehlt das Feld, gibt es keinen Deckel. Siehe [Tagesdeckel](#tagesdeckel-daily_cap). |
-
-### `params[]`
-
-| Feld | Pflicht | Bedeutung |
-|---|---|---|
-| `name` | ja | Parametername; zugleich der Platzhalter `{name}` im Request. |
-| `description` | empfohlen | Beschreibung für den Agenten. |
-| `type` | ja | `string`, `integer`, `number` oder `boolean`. |
-| `required` | nein | `true` = Pflichtparameter. Wird bei jedem Aufruf geprüft: Fehlt der Wert oder ist er `null`, wird der Aufruf als `argument_error` abgewiesen („Pflichtparameter fehlt: …"), bevor ein Request entsteht und bevor ein Tagesdeckel zählt. Ein leerer Text `""` gilt als gesetzt. Der Parameter muss als Platzhalter im Request stehen. Pfad-Platzhalter sind immer Pflicht; ihr Wert darf nicht leer, `.` oder `..` sein. |
-| `enum` | nein | Erlaubte Werte (nur bei `type: string`). Wird bei jedem Aufruf geprüft: Ein anderer Wert wird abgewiesen, bevor ein Request entsteht. |
-
-### `request`
-
-| Feld | Pflicht | Bedeutung |
-|---|---|---|
-| `method` | ja | `GET` (read-only) oder `POST` (bei `write: true` oder mit `read_via_post: true`). PUT/PATCH/DELETE sind nicht im Format. |
-| `path` | ja | Pfad relativ zur `base_url`, beginnt mit `/`. `{param}`-Platzhalter werden gefüllt und korrekt kodiert. |
-| `query` | nein | Liste von `{name, value}`. `value` darf `{param}`-Platzhalter enthalten. Besteht der Wert nur aus einem Platzhalter und ist der zugehörige Parameter nicht gesetzt, entfällt der Query-Parameter ganz. |
-| `encoding` | nein | Body-Kodierung. Leer = kein Body (GET). `multipart` = multipart/form-data (Datei-Upload, nur bei `POST`). `json` = application/json (JSON-Body, nur bei `POST`). |
-| `body` | nein | Die multipart-Felder (nur bei `encoding: multipart`, siehe unten). |
-| `body_json` | nein | Der JSON-Body als Struktur (nur bei `encoding: json`, siehe unten). Schließt `body` aus. |
-| `read_via_post` | nein | `true` = dieser `POST` mit JSON-Body **liest** (siehe [Lesender POST](#lesender-post-read_via_post)). Nur mit `encoding: json` und ohne `write: true`. |
 
 ## Statische Request-Header (`headers`)
 
