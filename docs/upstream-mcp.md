@@ -85,7 +85,7 @@ jnpt token create --allow github:search_issues         # nur dieses eine Tool
 
 | Feld | Pflicht | Bedeutung |
 |---|---|---|
-| `name` | ja | Eindeutiger Instanz-Name. **Namespace-Präfix** jedes Tool-Namens **und** Policy-Identität (Scope). Kleinbuchstaben/Ziffern/`-`/`_`, beginnt mit Buchstabe. **Reserviert** (das Gateway belegt diese Namen selbst — eine Integration dieses Namens verhindert den Start): `memory`, `kartei`, `usecase` (#642), `wissen` (#647), `ablage` (#726), `ping`, `catalog`, `report_problem`. |
+| `name` | ja | Eindeutiger Instanz-Name. **Namespace-Präfix** jedes Tool-Namens **und** Policy-Identität (Scope). Kleinbuchstaben/Ziffern/`-`/`_`, beginnt mit Buchstabe. **Reserviert** (das Gateway belegt diese Namen selbst — eine Integration dieses Namens verhindert den Start): `memory`, `kartei`, `usecase`, `graph`, `freigabe` und das Präfix `freigabe_`, `teamdoc` und das Präfix `teamdoc_`, `wissen`, `ablage`, `ping`, `catalog`, `report_problem`. Die Liste ist nicht abschließend: Das Gateway sperrt außerdem Namen und Präfixe für seine eigenen Werkzeugfamilien, unter anderem `app`, `skript`, `script`, `agent`, `desktop` sowie die Präfixe `app_`, `skript_`, `script_`, `agent_`, `desktop_`, `freigabe_`, `teamdoc_` und `run_control_`; ein Treffer verhindert den Start bzw. wird bei der Anlage abgewiesen. |
 | `description` | nein | Wird der Upstream-Tool-Beschreibung vorangestellt (`<description> — <upstream-desc>`) — damit mehrere Instanzen desselben Providers fürs Agent-Routing unterscheidbar sind. |
 | `url` | ja | Streamable-HTTP-Endpoint des Upstream-MCP-Servers (`http(s)://…`). **Muss die exakte Endpoint-URL sein** — JanuaPort folgt keinen Redirects (Credential-Leak-Schutz). |
 | `auth` | ja | Wie das Vault-Credential in jeden Request kommt (siehe unten). |
@@ -131,6 +131,14 @@ Write-Semantik (Produkt-Doku, nicht öffentlich) auf den Proxy):
   erfolgreichen Call, sieht der Agent einen Fehler, obwohl der Write evtl. schon
   stattfand — die Meldung bittet dann, im Zielsystem zu prüfen statt blind zu
   wiederholen.
+  **Ergebnis im Audit:** Was der Upstream abweist, steht nie als `ok`
+  im Protokoll. HTTP 403 → `denied`, jeder andere HTTP-/Netzfehler und ein
+  `isError`-Ergebnis → `upstream_error`; das `Detail` nennt nur eine statische
+  Ursache (bei HTTP-Fehlern die Status-Zahl), nie den Inhalt der Antwort. Die
+  Credential-ID und -Version des benutzten Credentials stehen wie bei jeder
+  Integration am Eintrag. Meldet der Upstream eine Abweisung als `isError`-
+  Ergebnis auf HTTP 200 (so Omnigraph), ist das `upstream_error`, nicht `denied` —
+  der Relay liest keinen Ergebnisinhalt.
 - **Keine automatischen Retries.** Der MCP-Client sendet einen `tools/call` genau
   **einmal** (kein automatischer Write-Retry) — wichtig, weil ein Write nicht
   idempotent ist.
@@ -307,6 +315,13 @@ Gruppen-Scope vergeben wird.
 
 - **Kein OAuth** (nur statisches Header-Credential aus dem Vault). Kein
   stdio/Subprozess-Transport. Keine Multi-Server-Orchestrierung.
+- **Antworten sind auf 1 MiB gedeckelt.** Jede HTTP-Antwort des
+  angebundenen Servers (Verbinden, `tools/list`, `tools/call`; ein SSE-Strom
+  zählt als Ganzes) darf höchstens 1 MiB groß sein, wie bei REST und SQL. Das
+  erste Byte darüber beendet das Lesen; der Aufruf scheitert mit „Antwort des
+  Upstream-MCP-Servers ist größer als das Limit von 1048576 Bytes“, ohne
+  Inhalt der Antwort, als gewöhnlicher Upstream-Fehler (Audit `upstream_error`).
+  Der Wert ist fest, kein Spec-Feld.
 - **Kein Hot-Reload:** Specs werden beim Start geladen. Eine Änderung greift nach
   einem Neustart (`docker compose up -d` nach Ablegen der Datei). Ein
   laufzeit-getriggerter Reload ist eine Folge-Story (#63-Naht).
@@ -328,3 +343,13 @@ Gruppen-Scope vergeben wird.
   Regel dagegen ausnahmslos: REST-Listen reisen als `{"items": […]}`
   ([`docs/connector-spec.md`](connector-spec.md)), Datenbank-Zeilen als
   `{"rows": […]}` ([`docs/db-connector-spec.md`](db-connector-spec.md)).
+
+## Weitere JanuaPort-Anlagen
+
+Ein Upstream mit `anlage_zusammenfassung` in der Read-Allowlist erscheint
+zusätzlich in der Anlagenübersicht. Dafür gelten HTTPS, ein Token der
+Gegenseite mit ausschließlich `anlage:zusammenfassung` im lokalen Vault,
+strenge Inhaltsprüfung und eine eigene Aufruffrist von fünf Sekunden. Die
+Spec bleibt auch bei fehlgeschlagener Start-Discovery im Sammelleser erhalten.
+Kein neues Vertrauensmodell oder Hot-Reload. Anleitung und Grenzen der
+Admin-Deeplinks: (Produkt-Doku, nicht öffentlich).

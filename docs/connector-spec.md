@@ -92,7 +92,7 @@ tools:
 
 | Feld | Pflicht | Bedeutung |
 |---|---|---|
-| `name` | ja | Eindeutiger Connector-Name. Wird zum **Prefix** jedes Tool-Namens (`demo_erp_list_invoices`). Bindestriche werden zu Unterstrichen. ⚠️ **Seit Bug #596:** Ein Name, der nach dieser Normalisierung kein gültiges Präfix ergibt (Großbuchstaben, Umlaute, Punkt, Leerzeichen, führende Ziffer), wird bei der **Anlage über die Admin-Fläche abgelehnt**; ein solcher Name im **Bestand** hält den Start NICHT auf, erzeugt aber beim Start eine **WARN-Zeile** mit Namen und Grund. Umbenannt wird nichts automatisch — ein Rename berührt Scopes, Tokens und Team-Zuordnungen. **Reserviert** (das Gateway belegt diese Namen selbst — eine Integration dieses Namens verhindert den Start): `memory`, `kartei`, `usecase` (#642), `wissen` (#647), `ablage` (#726), `ping`, `catalog`, `report_problem`. |
+| `name` | ja | Eindeutiger Connector-Name. Wird zum **Prefix** jedes Tool-Namens (`demo_erp_list_invoices`). Bindestriche werden zu Unterstrichen. ⚠️ **Heute gilt:** Ein Name, der nach dieser Normalisierung kein gültiges Präfix ergibt (Großbuchstaben, Umlaute, Punkt, Leerzeichen, führende Ziffer), wird bei der **Anlage über die Admin-Fläche abgelehnt**; ein solcher Name im **Bestand** hält den Start NICHT auf, erzeugt aber beim Start eine **WARN-Zeile** mit Namen und Grund. Umbenannt wird nichts automatisch — ein Rename berührt Scopes, Tokens und Team-Zuordnungen. **Reserviert** (das Gateway belegt diese Namen selbst — eine Integration dieses Namens verhindert den Start): `memory`, `kartei`, `usecase`, `graph`, `freigabe` und das Präfix `freigabe_`, `teamdoc` und das Präfix `teamdoc_`, `wissen`, `ablage`, `etl` (bei Team-Specs auch das Präfix `etl_`; ein **Bestand** `etl` startet, wird aber nicht geladen und per Warnung, Audit und Mail gemeldet), `ping`, `catalog`, `report_problem`. Die Liste ist nicht abschließend: Das Gateway sperrt außerdem Namen und Präfixe für seine eigenen Werkzeugfamilien, unter anderem `app`, `skript`, `script`, `agent`, `desktop` sowie die Präfixe `app_`, `skript_`, `script_`, `agent_`, `desktop_`, `freigabe_`, `teamdoc_` und `run_control_`; ein Treffer verhindert den Start bzw. wird bei der Anlage abgewiesen. |
 | `version` | **ja** | Fassung dieser Spec als **SemVer** `MAJOR.MINOR.PATCH`, in Anführungszeichen (`"1.0.0"`). Kein führendes `v`, kein `-beta`, kein `+build`, keine führenden Nullen. Fehlt sie oder ist sie ungültig, lädt die Spec **nicht** (siehe [Warum `version` Pflicht ist](#warum-version-pflicht-ist)). |
 | `instance` | nein | Deklarierte Anlagenwerte für Header und Pfade; siehe unten. |
 | `base_url` | ja | Basis-URL der API (`http://` oder `https://` mit Host). |
@@ -150,8 +150,9 @@ Jedes Feld hat `Name`, `Label`, `Kind`, `Example`, `Required`; `Field` bleibt
 als P1-kompatibler Feldpfad erhalten (`instance.<name>` bei Deklarationen).
 Deklarierte Werte sind immer Pflicht. Der Session-Login-Body bleibt ein separater
 Anhebungs-Teilbaum. Aktivierung und Anhebung nehmen `instance: {name: value}`
-in der Verwaltungs-API an; nur Menschen setzen die Werte, nie Admin-MCP oder
-`/mcp`. Die Verwaltungsoberfläche fragt die Werte bei Anlage und Vorlagen-Update
+in der Verwaltungs-API an. Die Werte setzen Menschen über GUI, REST und CLI; der
+Admin-MCP nimmt sie nur hinter dem menschlich gesetzten Schalter `target_address` an
+(mit Audit und Betreiber-Mail), über `/mcp` nie. Die Verwaltungsoberfläche fragt die Werte bei Anlage und Vorlagen-Update
 als Felder mit Label und Muster ab und sendet sie im `instance`-Objekt.
 Die Browser-Prüfung spiegelt die Server-Regeln; `minor` ist beim Update sichtbar,
 fehlende Werte sperren den Knopf. Keine Secrets und keine Erweiterung für JTL.
@@ -176,6 +177,7 @@ Die Antwort hängt an zwei Konventionen, die `version` erst möglich macht:
   Werkzeug-Fläche**: bessere Beschreibungen, ein korrigiertes
   `response`-Mapping, ein zusätzlicher statischer Header, ein anderes `timeout`.
 - **MINOR mindestens:** eine neue `instance[]`-Deklaration für Header; ein Pfadumstieg auf Instanzmarken bleibt MAJOR.
+- **MINOR mindestens:** Setzen, Ändern oder Entfernen von `response_error` / `response_error_message`: Das Fehlerverhalten ändert sich, die Fläche nicht.
 - **MAJOR** (`1.x.y` → `2.0.0`) = die **Werkzeug-Fläche ändert sich**: ein Tool
   kommt hinzu/fällt weg/wird umbenannt, ein Parameter oder sein Typ ändert sich,
   ein Tool wird schreibend, eine Privacy-Deklaration wird kleiner, `base_url`
@@ -207,10 +209,11 @@ sicher vergleichen ließen. **Immer in Anführungszeichen**, sonst liest YAML
 
 | Feld | Pflicht | Bedeutung |
 |---|---|---|
-| `header` | ja | Name des HTTP-Headers, meist `Authorization`. |
-| `template` | ja | Wert des Headers mit dem Platzhalter `{{credential}}`, z. B. `"Bearer {{credential}}"` oder `"{{credential}}"`. |
+| `header` | ja (außer bei `aws_sigv4`) | Name des HTTP-Headers, meist `Authorization`. |
+| `template` | ja (außer bei `aws_sigv4`) | Wert des Headers mit dem Platzhalter `{{credential}}`, z. B. `"Bearer {{credential}}"` oder `"{{credential}}"`. |
 | `credential` | ja (außer bei den delegierten Typen) | **Name** des Secrets im Vault — nie das Secret selbst. Anlegen mit `jnpt credential set --name <name>` (siehe README). Bei `oauth2_on_behalf_of` und `oauth2_token_exchange` **verboten**. |
-| `type` | nein | Herkunft des Werts, der `{{credential}}` füllt. Weglassen = statisches Vault-Credential (Default, unverändertes Verhalten). `oauth2_client_credentials` = JanuaPort holt sich einen Access-Token selbst (siehe [App-only-Token](#app-only-token-authtype-oauth2_client_credentials)). `session_login` = JanuaPort meldet sich mit dem Passwort aus dem Vault an und nutzt die Sitzung (siehe [Session-Login](#session-login-authtype-session_login)). `oauth2_on_behalf_of` und `oauth2_token_exchange` = delegierte Identität: das SSO-Token der angemeldeten Person wird getauscht (siehe [Token-Tausch](#token-tausch-nach-rfc-8693-authtype-oauth2_token_exchange)). |
+| `type` | nein | Herkunft des Werts, der `{{credential}}` füllt. Weglassen = statisches Vault-Credential (Default, unverändertes Verhalten). `oauth2_client_credentials` = JanuaPort holt sich einen Access-Token selbst (siehe [App-only-Token](#app-only-token-authtype-oauth2_client_credentials)). `session_login` = JanuaPort meldet sich mit dem Passwort aus dem Vault an und nutzt die Sitzung (siehe [Session-Login](#session-login-authtype-session_login)). `oauth2_on_behalf_of` und `oauth2_token_exchange` = delegierte Identität: das SSO-Token der angemeldeten Person wird getauscht (siehe [Token-Tausch](#token-tausch-nach-rfc-8693-authtype-oauth2_token_exchange)). `aws_sigv4` = AWS mit SigV4 über AssumeRole, nur lesend (siehe [AWS](#aws-authtype-aws_sigv4)). |
+| `aws` | nur bei `aws_sigv4` | `region`, `service`, `access_key_id`, `role_arn`, bei FilterLogEvents `max_log_window` — siehe [AWS](#aws-authtype-aws_sigv4). Bei jedem anderen `type` ein Ladefehler. |
 | `audience` | nur bei `oauth2_token_exchange` | Die Ziel-Audience des Tauschs, **genau ein** Bezeichner ohne Leer- und Steuerzeichen (meist die Client-ID des Zielsystems beim Identitätsanbieter). Bei jedem anderen `type` ein Ladefehler. |
 
 Das Secret steht **niemals** in der Spec: Die Datei darf bedenkenlos eingecheckt
@@ -439,6 +442,77 @@ Ein `session`-Block ohne `type: session_login` ist ein Ladefehler, ebenso
 - **Team-Integrationen** nutzen den gehärteten Client (nur öffentliche
   Ziele) — ein Service Layer im LAN geht nur im Besitz `corp`.
 
+## AWS (`auth.type: aws_sigv4`)
+
+Stufe 1, im Bau, **nur lesend**. JanuaPort signiert jede Anfrage mit
+Signature Version 4. Der Vault hält einen **Basisschlüssel**, der nur
+`sts:AssumeRole` auf eine Kundenrolle darf; JanuaPort holt damit kurzlebige
+Sitzungsschlüssel (fest 60 Minuten, nur im Speicher) und signiert damit.
+Einen statischen Modus gibt es nicht. Anleitung samt CloudFormation-Vorlage: (Produkt-Doku, nicht öffentlich).
+
+```yaml
+name: aws-termine
+version: "1.0.0"
+base_url: https://dynamodb.eu-central-1.amazonaws.com   # genau https://<service>.<region>.amazonaws.com
+instance:
+  - name: role_arn
+    label: Rollen-ARN der Leserolle
+    kind: text
+auth:
+  type: aws_sigv4
+  credential: aws-termine-basis          # Secret Access Key des Basisschlüssels (Vault)
+  aws:
+    region: eu-central-1
+    service: dynamodb                    # amplify | dynamodb | logs
+    access_key_id: AKIAJNPTBEISPIEL0001  # Key-ID des Basisschlüssels (kein Geheimnis)
+    role_arn: "{{instance.role_arn}}"    # Kundenrolle, als Instanzwert hinter target_address
+tools:
+  - name: get_termin
+    description: Liest genau einen Termin über seine ID aus der Tabelle termine.
+    params:
+      - {name: termin_id, description: ID des Termins, type: string, required: true}
+    headers:
+      X-Amz-Target: DynamoDB_20120810.GetItem   # konstant, aus der Leseliste
+    request:
+      method: POST
+      path: /
+      read_via_post: true
+      encoding: json
+      body_json:
+        TableName: termine                      # Konstante der Spec
+        Key:
+          pk:
+            S: "{termin_id}"                    # nur hier darf ein Parameter stehen
+```
+
+Regeln (beim Laden geprüft):
+
+- `header` und `template` sind verboten — den Kopf baut die Signatur. Die Region
+  wird streng geprüft (`^[a-z]{2}(-[a-z]+)+-\d$`), `base_url` ist genau der
+  Dienst-Host der Region; der STS-Host wird daraus abgeleitet und ist nie frei.
+- **Leseliste:** DynamoDB `GetItem` und `Query`, CloudWatch Logs
+  `FilterLogEvents` (je `POST /` mit `read_via_post`, `encoding: json` und
+  konstantem `X-Amz-Target` am Werkzeug) sowie Amplify `ListJobs`
+  (`GET /apps/<app>/branches/<branch>/jobs`, App und Branch konstant). Jedes
+  andere Target ist ein Ladefehler — ausdrücklich `ExecuteStatement` (PartiQL),
+  `Scan`, `StartQuery` und jedes Schreib-/Lösch-Target.
+- **Die Ressource ist Konstante der Spec.** Ein Werkzeug-Parameter darf nur
+  stehen unter `Key.<attr>.S|N` (GetItem), `ExpressionAttributeValues.<name>.S|N`
+  (Query) und `filterPattern` (FilterLogEvents). `TableName`, `IndexName`, alle
+  Ausdrücke, Log-Gruppen, `limit`/`Limit` und `nextToken` sind Konstanten;
+  `Limit` ist bei Query Pflicht, `limit` bei FilterLogEvents. Weil `nextToken`
+  konstant ist, liefert ein Werkzeug **nur die erste Seite**. Ein Platzhalter in
+  einem Feldnamen (Schlüssel) wird abgewiesen, nie ersetzt.
+- **Zeitfenster:** FilterLogEvents braucht `startTime`/`endTime` als
+  Pflicht-Parameter vom Typ `integer` (Millisekunden) und
+  `auth.aws.max_log_window` (höchstens 7 Tage). Ein größeres Fenster weist die
+  Laufzeit ab, sie kürzt nicht.
+- Keine weitere `X-Amz-*`-Kopfzeile, kein `write`, kein `response_file`, Besitz
+  nur `corp`.
+- Die **ExternalId** erzeugt die Anlage je Integration; sie steht nicht in der
+  Spec (Anzeige und Neu-Erzeugen: Admin-GUI, `GET/POST
+  /api/admin/integrations/{name}/aws-external-id[/rotate]`, Admin-MCP).
+
 ### `tools[]`
 
 | Feld | Pflicht | Bedeutung |
@@ -449,9 +523,14 @@ Ein `session`-Block ohne `type: session_login` ist ein Ladefehler, ebenso
 | `request` | ja | Der HTTP-Aufruf (siehe unten). |
 | `headers` | nein | **Statische Request-Header** nur für dieses Tool. Sie überlagern die gleichnamigen Header der obersten Ebene (siehe [Statische Request-Header](#statische-request-header-headers)). |
 | `response` | nein | JMESPath-Ausdruck, der die Antwort auf das Wesentliche projiziert. Ohne ihn wird die Antwort unverändert weitergegeben. |
+| `response_error` | nein | **Fehlerkennzeichen für 2xx**: JMESPath auf dem 2xx-JSON; Ergebnis genau `true` = der Aufruf ist ein `upstream_error`, alles andere ein Erfolg. Für Ziele, die einen Fehler mit HTTP 200 melden. Ungültiger Ausdruck = Ladefehler. Siehe [Fehler im 2xx-Body](#fehler-im-2xx-body-response_error). Änderung = mindestens MINOR. |
+| `response_error_message` | nein | JMESPath auf den Meldungstext des Fehlerkennzeichens, auf 200 Zeichen gedeckelt; nur ein String wird ausgegeben, nie der Body. Nur zusammen mit `response_error`. |
 | `response_file` | nein | Erklärt, dass die Antwort **eine Datei** ist und kein JSON. Die KI bekommt dann den daraus gewonnenen **Text** (siehe [Datei-Antwort](#datei-antwort-response_file)). Schließt `response` aus. |
+| `text_format` | nein | Textform des **Text-Blocks** der Antwort: `json` (Standard, = Feld weglassen) oder `toon`. Siehe [Textform des Text-Blocks](#textform-des-text-blocks-text_format). Schließt `response_file` aus; ein Wechsel ist MAJOR. |
 | `check` | nein | `true` markiert dieses Tool als Probe für `jnpt connector check`. Höchstens ein Tool pro Connector. |
 | `write` | nein | `true` markiert ein **schreibendes** (mutierendes) Tool. Erlaubt `request.method: POST` und verändert Berechtigung + Audit (siehe [Schreibende Tools](#schreibende-tools-write)). Default `false` = read-only. |
+| `freigabe` | nein | Menschliche SSO-Freigabe für write: true: vorschau benennt das lesende Vorschauwerkzeug, schluessel genau sämtliche Schreibparameter als erforderliche String-Felder. Ungültig = Ladefehler; Setzen/Ändern/Entfernen verlangt MAJOR. Siehe [Freigabepflicht](#freigabepflicht-freigabe). |
+| `daily_cap` | nein | **Tagesdeckel**: ganze Zahl > 0 = höchstens so viele Aufrufe dieses Schreibwerkzeugs je Integration und UTC-Tag. Nur mit `write: true` (sonst Ladefehler), nur in der Spec setzbar. Fehlt das Feld, gibt es keinen Deckel. Siehe [Tagesdeckel](#tagesdeckel-daily_cap). |
 
 ### `params[]`
 
@@ -460,7 +539,7 @@ Ein `session`-Block ohne `type: session_login` ist ein Ladefehler, ebenso
 | `name` | ja | Parametername; zugleich der Platzhalter `{name}` im Request. |
 | `description` | empfohlen | Beschreibung für den Agenten. |
 | `type` | ja | `string`, `integer`, `number` oder `boolean`. |
-| `required` | nein | `true` = Pflichtparameter. |
+| `required` | nein | `true` = Pflichtparameter. Wird bei jedem Aufruf geprüft: Fehlt der Wert oder ist er `null`, wird der Aufruf als `argument_error` abgewiesen („Pflichtparameter fehlt: …"), bevor ein Request entsteht und bevor ein Tagesdeckel zählt. Ein leerer Text `""` gilt als gesetzt. Der Parameter muss als Platzhalter im Request stehen. Pfad-Platzhalter sind immer Pflicht; ihr Wert darf nicht leer, `.` oder `..` sein. |
 | `enum` | nein | Erlaubte Werte (nur bei `type: string`). Wird bei jedem Aufruf geprüft: Ein anderer Wert wird abgewiesen, bevor ein Request entsteht. |
 
 ### `request`
@@ -510,7 +589,7 @@ Header-Namen unabhängig davon).
   `auth` — ein Weg, ein Vault-Zugriff, eine Stelle, an der redigiert wird. Wer
   einen API-Key als Header braucht, setzt ihn über `auth.header` +
   `auth.template` (genau dafür ist er da).
-- **Diese vier Header gehören JanuaPort** und werden hier **abgewiesen** (mit einer
+- **Diese fünf Header gehören JanuaPort** und werden hier **abgewiesen** (mit einer
   Meldung, die sagt, wem sie gehören):
 
   | Header | Kommt von |
@@ -519,6 +598,7 @@ Header-Namen unabhängig davon).
   | `Content-Type` | `request.encoding` |
   | `Content-Length` | setzt Go selbst aus dem Body |
   | `Host` | ergibt sich aus `base_url` |
+  | `X-Jnpt-Freigabe` | setzt ausschließlich das Freigabe-Gate nach atomarer Reservierung (siehe „Freigabepflicht“) |
 
   Sie werden **nicht still ignoriert**: Die Spec lädt gar nicht erst. Genau das
   wäre sonst der Ausgang — ein hier gesetztes `Content-Length` würde beim Senden
@@ -560,9 +640,12 @@ braucht — das spart Kontext und macht Tools verständlicher. Beispiele
 Eine MCP-Antwort hat **zwei Träger**, und bei einem Listen-Ergebnis sind sie
 seit #457 nicht mehr identisch:
 
-- Der **Text-Block** trägt die Projektion **unverändert**. Eine Liste ist dort
-  eine Liste — daran ändert sich nichts, und bestehende Agenten-Prompts, die
-  diesen Text lesen, bleiben gültig.
+- Der **Text-Block** trägt die Projektion **unverändert** als kompaktes JSON.
+  Eine Liste ist dort eine Liste — daran ändert sich nichts, und bestehende
+  Agenten-Prompts, die diesen Text lesen, bleiben gültig. **Einzige Ausnahme:**
+  ein Werkzeug mit `text_format: toon` (siehe
+  [unten](#textform-des-text-blocks-text_format)); ohne das Feld bleibt der Text
+  byteweise das JSON.
 - **`structuredContent`** trägt bei einem Listen-Ergebnis die Hülle
   **`{"items": […]}`**. Ein Objekt-Ergebnis steht dort unverändert.
 
@@ -587,6 +670,125 @@ Antwort und darf nicht wie ein Fehler aussehen.
 `structuredContent`. Ein Agenten-Prompt, der ausdrücklich das *strukturierte*
 Ergebnis als Liste erwartet, muss auf `items` nachziehen. Prompts, die den
 Text-Block lesen (der Normalfall), sind nicht betroffen.
+
+### Textform des Text-Blocks (`text_format`)
+
+Stufe 1 „Sicher verbinden“, gebaut, unveröffentlicht. Lange, gleichförmige
+Listen kosten als JSON viele Tokens, weil jeder Schlüssel in jeder Zeile steht.
+Ein Werkzeug kann seinen **Text-Block** deshalb als
+[TOON](https://github.com/toon-format/spec) ausgeben:
+
+```yaml
+- name: list_customers
+  description: Lists customers.
+  request: { method: GET, path: /v1/customers }
+  response: items
+  text_format: toon      # json (Standard) | toon
+```
+
+```text
+[3]{id,name,city}:
+  1,‹kunde-6b8430›,"Köln, Süd"
+  2,‹kunde-6e883a›,Bonn
+  3,‹kunde-937ad4›,Essen
+```
+
+**Wann es greift.** Nur bei einem Werkzeug mit `text_format: toon`, und nur wenn
+die Antwort eine Tabelle ist: ein Array (an der Wurzel oder als direkter Wert des
+Wurzelobjekts) aus **mindestens 5 Objekten** mit **derselben Schlüsselmenge** und
+**nur primitiven Werten** — und nur, wenn der TOON-Text kürzer ist als das JSON.
+Alles andere (4 Zeilen, uneinheitliche Schlüssel, verschachtelte Werte,
+gemischte Arrays, Steuerzeichen, ungültiges UTF-8) bleibt **byteweise das
+bisherige JSON**. Ein Geschwisterobjekt neben der Tabelle wird mitgeschrieben.
+
+**Was es nicht ändert.** TOON ist der **letzte** Schritt: Projektion,
+Pseudonymisierung und Datenfilter laufen vorher, das Audit (`ReportResponse`) ist
+weiter JSON, ebenso `structuredContent`, die Freigabe und die Admin-API. Ein
+pseudonymisiertes Kürzel `‹label-id›` steht im TOON-Text byteweise genauso wie
+dort; ein Klartext kommt nie hinzu. Werte mit Komma, Doppelpunkt,
+Anführungszeichen, Zeilenumbruch, führendem `-` oder `#`, Leerraum am Rand, leere
+und zahlen- oder wahrheitswertartige Strings stehen in Anführungszeichen — ein
+Wert aus dem Zielsystem kann so keine zusätzliche Zeile oder Spalte erzeugen.
+
+**Beschreibung.** Bei `toon` hängt das Gateway einen festen Satz an die
+Beschreibung des Werkzeugs (`toon.FormatHint`), damit der Agent die Tabelle lesen
+kann; ohne das Feld bleibt die Beschreibung unverändert.
+
+**Grenzen.** Kein Schalter je Anlage oder Token, nur das Feld je Werkzeug. Nur
+REST- und Datenbank-Werkzeuge; Upstream-MCP, Dateien, Karteien, `memory` und
+`wissen` bleiben unberührt. Listenform (`- `), Key-Folding und andere Trennzeichen
+als das Komma gibt es nicht. Ein Wechsel von `text_format` ist eine andere
+Antwortform für die KI und damit **MAJOR** (Flächen-Wächter). Katalog-Vorlagen
+setzen das Feld nicht; das geschieht je Vorlage als eigene MAJOR-Anhebung.
+
+### Leere Antwort: „ausgeführt, keine Daten"
+
+Antwortet das Zielsystem mit **2xx und leerem Body** (nach dem Trimmen), ist das
+ein Erfolg: Das Ergebnis ist `{"status": <HTTP-Status>}`, zum Beispiel
+`{"status": 202}` bei Graph `sendMail` oder `{"status": 204}` bei einem Schreib-
+Endpunkt ohne Rückgabe. Ein `response`-Ausdruck und ein `response_error`-Ausdruck
+werden dann nicht angewendet, der Audit-Status ist `ok`. Für die KI heißt das: **ausgeführt, keine Daten — ein
+Wiederholungsaufruf ist nicht nötig** (bei einem Schreibwerkzeug würde er die
+Aktion doppelt auslösen). Ein leerer Body bei 4xx/5xx bleibt ein Fehler mit
+Status, und ein nicht leerer Body, der kein gültiges JSON ist, bleibt ein Fehler.
+Schreibwerkzeuge mit leerer Erfolgsantwort sagen den `{"status": …}`-Fall in ihrem
+Werkzeugtext.
+
+### Fehler im 2xx-Body: `response_error`
+
+Manche Zielsysteme melden einen Fehler **nicht** mit einem 4xx/5xx, sondern mit
+HTTP 200 und einem Fehlerzeichen im JSON (`{"ok": false, "error": "channel_not_found"}`
+bei Slack, ähnlich bei einigen RPC-APIs). Ohne weitere Angabe gilt jedes 2xx mit
+gültigem JSON als Erfolg — die KI hielte so eine nicht zugestellte Nachricht für
+verschickt. Ein Werkzeug erklärt das Kennzeichen deshalb selbst:
+
+```yaml
+  - name: post_message
+    write: true
+    # ...
+    response: "{ts: ts}"
+    response_error: "ok == `false`"      # JMESPath auf dem 2xx-JSON
+    response_error_message: error        # JMESPath auf den Meldungstext (optional)
+```
+
+| Feld | Bedeutung |
+|---|---|
+| `response_error` | JMESPath auf dem 2xx-JSON. Ergibt der Ausdruck **genau `true`**, ist der Aufruf ein Fehler. Jedes andere Ergebnis — `false`, `null`, ein String, eine Zahl, ein Array, ein nicht leeres Objekt — ist ein Erfolg wie ohne das Feld. Ein „wahr aussehender" Wert zählt also nicht: Der Ausdruck muss selbst einen Vergleich bilden (`ok == `false``, `error != `null``). |
+| `response_error_message` | JMESPath auf den Meldungstext, höchstens **200 Zeichen**. Nur ein **String** wird ausgegeben; ein Objekt, Array, eine Zahl oder `null` ergibt keine Meldung. Nur zusammen mit `response_error` erlaubt (sonst Ladefehler). |
+
+**Regeln beim Laden:** Ein ungültiger JMESPath-Ausdruck in einem der beiden
+Felder weist die Spec ab (nicht erst der Aufruf). `response_error_message` ohne
+`response_error` und `response_error` neben `response_file` (eine Datei ist kein
+JSON) sind Ladefehler. Beides ist an jedem Werkzeug erlaubt, lesend wie schreibend.
+
+**Was bei `true` passiert:** Der Aufruf endet als `upstream_error` — **derselbe
+Weg wie ein 4xx/5xx**: Werkzeugfehler für die KI, Audit-Status `upstream_error`
+(es gibt keinen neuen Status), Tagesdeckel (`daily_cap`) und Metriken zählen ihn
+wie einen Upstream-Fehler. Die Meldung lautet „Zielsystem meldet trotz HTTP 200
+einen Fehler (response_error)" und trägt höchstens den gedeckelten Text aus
+`response_error_message` (ein vom Zielsystem gespiegeltes Credential ist geschwärzt,
+Steuerzeichen fallen weg); **nie den Body und nie die `response`-Projektion**.
+Das Kennzeichen wird auf dem Dokument vor der Projektion geprüft.
+
+**Grenzen (bewusst klein):**
+
+- Ein **leerer** 2xx-Body wertet das Kennzeichen nicht aus: Das Ergebnis
+  bleibt `{"status": <Code>}`.
+- Ein Ausdruck, der auf dem Dokument nicht auswertbar ist (etwa `abs()` auf einem
+  String), ist ein `config_error` — laut statt still Erfolg. Die Meldung nennt den
+  Ausdruck, nicht den Body.
+- Keine Wiederholung und kein Alarm: Das Kennzeichen macht den Fehler sichtbar, es
+  ändert nichts am Einzelversuch (Schreibwerkzeuge werden nie wiederholt).
+- Der 4xx/5xx-Weg bleibt unverändert; das Kennzeichen gilt nur für 2xx.
+- Der Selbsttest läuft durch denselben Pfad: Ein Probe-Werkzeug mit
+  `response_error` meldet bei `true` `upstream_error`.
+
+**Versionsfolge:** Setzen, Ändern oder Entfernen von `response_error` oder
+`response_error_message` ändert das Fehlerverhalten, aber nicht die Werkzeug-Fläche.
+Der Flächen-Wächter (`DimResponseError`) stuft es deshalb als **MINOR** ein: Eine
+PATCH-Erhöhung wird abgewiesen, MINOR genügt, MAJOR bleibt für Änderungen der
+Fläche.
+
 
 ## Datei-Antwort (`response_file`)
 
@@ -639,21 +841,28 @@ Immer ein Objekt mit denselben Feldern — auch wenn nichts zu lesen war:
 | Feld | Bedeutung |
 |---|---|
 | `name` | Dateiname, falls der Dienst einen `Content-Disposition` sendet, sonst leer |
+| `hinweis` | fester Injection-Rahmensatz, ergänzt um inhaltsfreie Fundstellen versteckter Abschnitte |
 | `mime` | der aus den **Bytes** erkannte Typ |
 | `declared_mime` | der Typ, den der Dienst **behauptet** hat |
 | `bytes` | Größe der abgerufenen Datei |
-| `kind` | `pdf`, `xml`, `json`, `csv`, `text` oder `unbekannt` |
+| `kind` | `pdf`, `xml`, `json`, `csv`, `text`, `docx`, `xlsx`, `pptx` oder `unbekannt` |
 | `readable` | ob Inhalt geliefert wird — `false` heißt: nicht raten |
 | `text` | der gewonnene Inhalt |
 | `truncated` | ob gekürzt wurde |
 | `text_bytes_total` | Länge des Textes vor dem Zuschnitt |
+| `hidden_text_count` | erkannte versteckte Abschnitte im gelesenen Teil (sonst 0); Seite/Absatz und Gründe stehen als Zusatz im festen Injection-Hinweis `hinweis` |
 | `note` | die ehrliche Erklärung, wenn (nicht vollständig) gelesen werden konnte |
 | `embedded[]` | in einem PDF eingebettete Dateien — bei einer E-Rechnung das XML |
 
+PDF und DOCX markieren erkannten versteckten Text als `[versteckter Text: …]`,
+ohne ihn zu entfernen oder zu sperren. Benachbarte versteckte Läufe zählen als
+ein Abschnitt. Erkennung und Grenzen: [Datei-Connector](file-connector-spec.md).
+
 Gelesen werden in dieser Version: **PDF-Textebene**, **in einem PDF eingebettete
 Dateien** (ZUGFeRD/Factur-X — das XML ist für eine KI die belastbare Quelle für
-Beträge und Rechnungsnummern), **XML, JSON, text/plain, text/csv**. Word, Excel,
-Bilder, `.eml` und ZIP kommen mit `readable: false` plus Typ und Größe zurück.
+Beträge und Rechnungsnummern), **XML, JSON, text/plain, text/csv** sowie
+**Word, Excel, PowerPoint (docx, xlsx, pptx)**. Bilder, alte Office-Dateien,
+`.eml` und sonstige ZIP kommen mit `readable: false` plus Typ und Größe zurück.
 Ein **gescanntes PDF** hat keine Textebene: leerer Text und eine Notiz, die das
 sagt — **es gibt kein OCR**.
 
@@ -698,9 +907,13 @@ Standardmäßig sind Tools read-only. Ein **schreibendes** Tool markiert man mit
 `write: true`; es darf dann `request.method: POST` mit einem
 **multipart/form-data**-Body (Datei-Upload, dieser Abschnitt) oder einem
 **JSON-Body** ([`encoding: json`](#json-body-encoding-json)) verwenden. Mehr
-Schreib-Formen gibt es im Format nicht — bewusst eng: additiv und umkehrbar
-(z. B. „Beleg in die Inbox legen", „Entwurf anlegen"), nie „final
-verbuchen/löschen".
+Schreib-Formen gibt es im Format nicht — bewusst eng: additiv
+(z. B. „Beleg in die Inbox legen", „Entwurf anlegen"), nie löschen oder
+überschreiben. **Eine Ausnahme von „umkehrbar" ist ausdrücklich entschieden:** Lexwares `create_invoice` legt eine Rechnung an und schließt sie
+ab (`finalize=true` als Konstante, nie als Parameter). Das ist additiv, über die
+API aber nicht mehr änderbar; Korrektur ist eine Gutschrift in Lexware. Die
+Beschreibung sagt das, ebenso, dass ein Wiederholen eine zweite Rechnung
+erzeugt (Lexware kennt keinen Idempotenz-Schlüssel). Begründung und Grenzen: (Produkt-Doku, nicht öffentlich).
 
 ```yaml
 tools:
@@ -782,7 +995,7 @@ die Inbox legt. Inbox vs. anheften: `get_voucher` liefert ein `files`-Array
   versehentlich Schreibrechte.
 - **Bestätigung:** Schreibende Tools tragen MCP-Annotations
   (`readOnlyHint:false`), sodass ein Client (z. B. Cowork) vor dem Aufruf
-  nachfragen kann. In die Description gehört der einheitliche **Kernsatz**
+  nachfragen kann. Ohne `freigabe` gehört in die Description der einheitliche **Kernsatz**
   (heute, wörtlich, mit dem tool-genauen Scope):
 
   > This is a WRITE action. It is annotated as such, so your client may ask
@@ -806,17 +1019,19 @@ die Inbox legt. Inbox vs. anheften: `get_voucher` liefert ein `files`-Array
   money or leaves the company …") ist verboten — an einem Werkzeug, das es nie
   tut, ist sie Rauschen, das die KI bremst. Einen Beleg
   ablegen, eine Datei anhängen, einen Entwurf anlegen oder eine Mail
-  verschieben bewegt kein Geld und wirkt nicht nach außen. In der heute
+  verschieben bewegt kein Geld und wirkt nicht nach außen. Dasselbe gilt für
+  Lexwares `create_contact` und `create_invoice`: Die Rechnung wird
+  angelegt und abgeschlossen, aber weder versendet noch bezahlt. In der heute
   ausgelieferten Fläche trägt den Satz deshalb genau zwei Werkzeuge:
-  `linkedin-seite-community:reply` veröffentlicht eine öffentliche Antwort als
-  Organisation, `microsoft-graph-mail:reply` sendet eine Antwort an den Absender
-  einer vorhandenen Mail. Kommt ein weiteres
+  `linkedin-seite-community:reply` veröffentlicht eine öffentliche
+  Antwort als Organisation, `microsoft-graph-mail:reply` sendet eine
+  Antwort an den Absender einer vorhandenen Mail. Kommt ein weiteres
   echtes Sende- oder Zahlwerkzeug, gehört es in die Liste
   `geldOderAussenwirkung` in (Produkt-Doku, nicht öffentlich); der Pin lässt
   Satz B an jedem anderen Werkzeug scheitern (auch umformuliert), und der
   Wächter verbietet die alte Wenn-Formulierung in jedem Werkzeugtext.
 
-  **Warum nicht „a human must confirm":** JanuaPort fragt nie selbst;
+  **Warum nicht „a human must confirm“ bei gewöhnlichen Writes:** Ohne deklarierte `freigabe` fragt JanuaPort nicht selbst;
   fragen kann nur der Client über die
   Annotation. Ein produktiver Agent, der „ein Mensch muss bestätigen" liest,
   wartet auf eine Bestätigung, die nie kommt. Eine Freigabe ist ein Auftrag
@@ -829,6 +1044,136 @@ die Inbox legt. Inbox vs. anheften: `get_voucher` liefert ein `files`-Array
   Scheitert das Schreiben des Audit-Events **nach** dem Upload, sieht der Agent
   einen Fehler, obwohl die Datei evtl. schon hochgeladen wurde — die Meldung
   bittet dann, im Zielsystem zu prüfen, statt blind zu wiederholen.
+
+### Freigabepflicht (`freigabe`)
+
+Optional: `freigabe.medien_ablage: redaktion-medien` bindet ein gültiges
+Freigabe-Schreibwerkzeug an einen Ablagenamen (Namensregel der Datei-Integrationen).
+Außerhalb von freigabe, an einem Lesewerkzeug, mit ungültigem Namen oder unbekannten
+Schlüsseln wird die Spec abgewiesen. Die Option ändert `DimFreigabe`: Setzen,
+Ändern oder Entfernen verlangt MAJOR. Zur Laufzeit sind genau eine aktive Ablage
+und derselbe Besitzer wie bei der Spec erforderlich; sonst gibt der Medienweg 404.
+Die SSO-Freigabeansicht liest `datei` nur aus dem Schnappschuss, prüft Status offen,
+Wirkungshash und Byte-SHA-256; PNG/JPEG/GIF inline, PDF als Download. Privacy-Sperre
+und 32-MiB-Deckel des vorhandenen get_file bleiben verbindlich. Kein KI-Byteweg.
+
+
+Stufe 2, der Gateway-Teil ist gebaut, unveröffentlicht; menschliche Oberfläche und
+Beisteller werden separat geliefert. Die Option gehört ausschließlich an `write: true`:
+
+```yaml
+    freigabe:
+      vorschau: vorschau
+      schluessel: [eintrag_id]
+```
+
+`vorschau` muss ein anderes, existierendes lesendes JSON-Werkzeug derselben Spec
+sein. `schluessel` ist nicht leer und enthält eindeutige, erforderliche
+String-Parameter beider Werkzeuge. Die Schreibparameter müssen als Menge genau
+den Schlüsselfeldern entsprechen; zusätzliche optionale oder erforderliche
+Schreibparameter sind Ladefehler. Das Gate weist auch zusätzliche Aufrufargumente
+vor Vorschau und Start ab. Kein Mail-Feld, keine Quelle `argumente`.
+Ungültige Deklarationen scheitern beim Laden. Setzen, Ändern und Entfernen
+verlangen MAJOR (`DimFreigabe`); LinkedIn-Manage springt deshalb auf 2.0.0.
+
+Der Handler holt die aktuelle Vorschau über denselben Executor und baut die
+Wirkung aus dessen Feldern `aktion`, `ziel_urn`, `text`, `medien` mit sichtbarem
+`name`/`sha256` und optional `umfrage` mit `frage`, geordneten `antworten` und
+`dauer`. Die Felder liegen direkt im projizierten Vorschauobjekt. Das Pflichtfeld `hash`
+muss beim Anfordern und erneut vor Start mit dem selbst berechneten v2-Hash
+übereinstimmen; sonst Fehler ohne Anlage beziehungsweise Verbrauch. Bei LinkedIn
+setzt der Server die Aktionsnamen posten/bearbeiten/loeschen/kommentar anhand
+der Schreibroute, sonst den Werkzeugnamen. Nur Schlüsselfelder und diese Aktion
+gehen in die Vorschau; KI-Hash und KI-Freigabestatus sind keine Autorität.
+
+`freigabe_anfordern(werkzeug, schluessel)` verwendet `integration:werkzeug` und
+ein JSON-Objekt mit genau den Schlüsselfeldern. Es verlangt
+`freigabe:freigabe_anfordern` und das exakte Zielrecht samt dessen Datenfilter,
+liefert ID und `pfad: /freigaben/<id>` und übernimmt den globalen Deckel von 20
+offenen Aufträgen. Nur ein Mensch mit SSO und Freigeber-Merkmal entscheidet.
+`freigabe_status(id)` verlangt `freigabe:freigabe_status` sowie dasselbe Zielrecht
+samt Filter und liefert nur `status`, `erstellt`, `entscheidungszeit`.
+Ein bloßer Provider-Scope `freigabe` gibt keine dieser Fähigkeiten frei.
+
+Eine passende freigegebene Wirkung wird mit atomarem CAS und Audit auf laeuft
+gesetzt, bevor der Schreibrequest hinausgeht. Der ausschließlich vom Server
+gesetzte Header lautet exakt:
+
+```text
+X-Jnpt-Freigabe: hash=freigabe:v2:sha256:<64 kleine Hexzeichen>
+```
+
+Der Header trägt genau einen Wert und keine Auftrags-ID; die Auftragsbindung
+erfolgt durch das Start-CAS im Kern. Er ist case-insensitiv auf Spec-/Werkzeugebene und in auth.header
+reserviert. Parameter-zu-Header-Ziele sind kein Teil des Formats; `Load` weist
+sie ab. Werkzeugargumente setzen den Header nicht.
+
+`ausgefuehrt: true` bestätigt den Erfolg, auch zusammen mit `wiederholt: true`
+für ein bereits gespeichertes Beisteller-Ergebnis desselben Hashs. Der
+Wiederholmarker allein genügt nicht.
+HTTP 200 mit `nicht_ausgefuehrt: true` erlaubt Wiederholung ohne neuen Klick, ausschließlich
+vor dem ersten LinkedIn-Schreibversuch im Beisteller und nach bestandenem
+Header-Check. Der Kern wertet Ergebnisfelder nur aus 2xx-Antworten aus;
+409/429/503 bleiben auch mit einem Marker im Fehlerbody unklar. Nach Start-CAS
+läuft der Schreibcall mit `context.WithoutCancel`; Client-Abbruch und Aufruferfrist
+beenden ihn nicht. Die Executorfrist (höchstens 120 s) und ein kürzeres
+`http.Client.Timeout` gelten weiter. Vorschau und Aufrufe ohne gestarteten Auftrag
+bleiben am Client-Kontext. Executor-Timeout, 5xx, widersprüchliche Marker und
+unbekannte Antworten ohne Ergebnisfelder werden unklar;
+keine automatische Wiederholung. Bei fehlender Freigabe oder Hashabweichung
+bleibt der Auftrag unverändert. Auditfehler vor Start verhindern das Senden;
+bei Abschlussfehler bleibt laeuft gesperrt bis zur auditierten Neustart-Recovery.
+
+Der Kernsatz für diese tatsächlich gesperrten Werkzeuge lautet:
+
+> This is a WRITE action. JanuaPort sends it only after matching human SSO approval.
+> It needs the tool-exact permission "integration:werkzeug".
+
+### Tagesdeckel (`daily_cap`)
+
+Ein Schreibwerkzeug kann je Tag nur begrenzt oft aufgerufen werden — ein
+Sicherheitsnetz gegen einen Agenten, der in eine Schleife gerät, ohne dass ein
+Mensch jeden Aufruf freigibt. Die Spec setzt den Deckel am Werkzeug:
+
+```yaml
+  - name: set_lead_stage
+    write: true
+    daily_cap: 50          # höchstens 50 Versuche je Integration und UTC-Tag
+```
+
+**Regeln (beim Laden geprüft):** eine ganze Zahl größer 0; nur an einem
+Werkzeug mit `write: true` (an einem Lesewerkzeug oder einem lesenden POST ist
+es ein Ladefehler). Er ist allgemein — jedes Schreibwerkzeug jeder Spec kann ihn
+setzen, es gibt keinen Anbieter-Sonderfall im Kern. Weder ein Aufrufer noch ein
+Token kann ihn ändern.
+
+**Was gezählt wird:**
+
+- Gezählt werden **Versuche**, und zwar sobald die Eingabe geprüft ist (Schema,
+  `enum`, Typen, Body) und **vor** dem Request an das Zielsystem. Ein
+  Upstream-Fehler (4xx, 5xx, 429) und ein Timeout verbrauchen den Versuch mit;
+  eine Eingabe, die schon an der Prüfung scheitert (z. B. ein `enum`-Verstoß),
+  zählt nicht.
+- Der Zähler gilt **je Integration (Spec-Name) und je Werkzeug**, nicht je Token
+  und nicht je Identität. Zwei Integrationen aus derselben Vorlage zählen
+  getrennt, zwei Werkzeuge derselben Integration ebenso.
+- Tageswechsel ist die UTC-Mitternacht, nicht die Ortszeit.
+- **Der Zähler liegt nur im Speicher des Serverprozesses.** Er beginnt beim
+  Tageswechsel und nach jedem Neustart bei null (ein Neuladen der Integrationen
+  baut den Executor neu und setzt ihn ebenfalls zurück). Es gibt keinen Store
+  und keinen Schreibpfad dafür.
+- Prüfen und Zählen sind ein Schritt (Mutex): Parallele Aufrufe überschreiten
+  den Deckel nicht.
+
+**Was beim Erreichen passiert:** Der Aufruf endet mit einer festen Absage, bevor
+ein Request entsteht. Der Text nennt weder Parameter noch Werte. Die Absage ist
+ein `*runtime.DailyCapError` (Unwrap auf `*ArgumentError`), das Audit führt sie wie
+jeden abgewiesenen Aufruf (Status `argument_error`, ein eigener Status ist ein
+Nachschnitt in der Komposition).
+
+**Flächen-Wächter:** Der Deckel gehört zur Werkzeug-Fläche
+(`DimDailyCap`). Setzen, Ändern oder Entfernen ist `major`.
+
 
 ## JSON-Body (`encoding: json`)
 
@@ -895,8 +1240,13 @@ tools:
   einen Body, nicht zwei.
 - Die **oberste Ebene ist ein Objekt** (`feld: wert`). Ein einzelner Text oder
   eine Liste als ganzer Body ist nicht vorgesehen.
-- **Kein leeres Objekt und keine leere Liste** — irgendwo im Baum. Ein leerer
-  Container in der Spec ist immer ein Versehen.
+- **Keine leere Liste** irgendwo im Baum und **kein leerer Body** — beides ist
+  ein Versehen.
+- **Ein leeres Objekt `{}` im Baum ist eine Konstante**: Es wird
+  genau so gesendet. Auslöser ist Lexware, das beim Anlegen eines Kontakts
+  `roles: {customer: {}}` verlangt („The role must be set as an empty object").
+  Ein Objekt, das erst durch weggelassene Parameter leer **wird**, entfällt
+  weiterhin (siehe unten).
 - **Feldnamen sind Text und tragen keine Platzhalter.** `{param}` wird nur in
   **Werten** ersetzt, nie in Feldnamen (sonst stünde er still im Body).
 - Jeder `{param}` in einem Textwert muss einem **deklarierten Parameter**
@@ -918,7 +1268,22 @@ nach oben fort:
   entfällt ebenfalls. Im Beispiel oben: ohne `reply_to` fehlt nicht nur die
   Adresse, sondern das ganze `replyTo`-Feld.
 - Bleibt am Ende gar nichts übrig, wird `{}` gesendet.
-- Konstante Werte aus dem YAML (`normal`, `true`, Zahlen) bleiben immer stehen.
+- Konstante Werte aus dem YAML (`normal`, `true`, Zahlen, ein geschriebenes
+  `{}`) bleiben stehen — mit einer Ausnahme:
+- **Ein Objekt als Listen-Eintrag, von dessen Platzhaltern keiner gesetzt ist,
+  entfällt ganz, samt seiner Konstanten**. Beispiel Lexware
+  `create_invoice`: Die zweite Rechnungsposition trägt `type: custom` und
+  `currency: EUR` als Konstanten. Ohne alle `item2_*`-Parameter verschwindet die
+  ganze Position, die Liste wird kürzer. Ist nur ein **Teil** gesetzt und trägt
+  der Eintrag Konstanten, lehnt JanuaPort den Aufruf **vor dem Senden** ab
+  (`ArgumentError`): Die Meldung nennt die fehlenden
+  Parameternamen („Listeneintrag unvollständig: item2_net_price,
+  item2_tax_rate fehlen"), es geht nichts ans Zielsystem. Still weggelassen wird
+  ein teilweise gesetzter Eintrag nie: Bei einer Rechnungsposition wäre das ein
+  Fehlbetrag. Gezählt werden alle Platzhalter im Teilbaum des Eintrags, auch
+  verschachtelte (`unitPrice.netAmount`); ein Typfehler zählt als gesetzt. Ein
+  Eintrag **ohne** Konstanten (Odoo `vals_list`) geht auch teilweise gesetzt
+  hinaus. Ein Listen-Objekt ganz ohne Platzhalter (nur Konstanten) bleibt immer.
 - **Tupel entfallen ganz.** Eine Liste aus einfachen Werten mit mindestens
   einem festen Wert, die **selbst Eintrag einer Liste** ist — etwa ein
   Filter-Tripel `["name", "ilike", "{q}"]` in einer Liste von Filtern —, entfällt
@@ -1041,10 +1406,10 @@ Für `jnpt connector check` gilt: Ohne `check: true` nimmt die Probe ein
 
 ## Audit & Redaction (`redact_params`)
 
-Jeder Tool-Aufruf, der den Dispatch erreicht, wird protokolliert (`jnpt audit
-list`, siehe README; Aufrufe auf out-of-scope-/unbekannte Tools weist das
-MCP-SDK davor ab und erzeugen derzeit keinen Eintrag — bekannte Einschränkung
-#53). Das Audit-Event speichert die **Tool-Argumente** als JSON — nie Header
+Werkzeug-Aufrufe werden protokolliert (`jnpt audit list`, siehe README).
+Out-of-scope-/unbekannte Namen auf `/mcp` und seinen Sichten erzeugen
+`denied` ohne Argumente; ab 30 Einzelereignissen je Token/Minute werden
+weitere Versuche als Zähler zusammengefasst (unveröffentlicht). Das Audit-Event speichert die **Tool-Argumente** als JSON — nie Header
 oder das Credential. Sind einzelne Argumente trotzdem sensibel (z. B. eine Personen-ID
 oder ein Suchbegriff mit PII), nimm ihre Namen in `redact_params` auf:
 
@@ -1073,10 +1438,18 @@ redigiert, das ihn als Parameter hat.
 > für **alle** Argumentwerte, auch deklarierte: Nur Schlüsselnamen mit
 > `[REDACTED]` stehen im Ereignis und im Inhalt samt Export.
 
+Transportfehler enthalten weder die URL noch darin eingesetzte Pfad- oder
+Query-Argumentwerte. Argumentfehler nennen Parametername und erwartete Form,
+keine Argumentwerte. Das gilt für die Antwort an die KI und den Fehlergrund
+im Audit-`Detail` auf jeder Protokolltiefe, unabhängig von `redact_params`.
+Der innere Transportgrund (z. B. `connection refused`) bleibt erkennbar.
+
 > **Automatisch redigiert:** Bei einem schreibenden Datei-Upload-Tool wird der
 > File-Quell-Parameter (der base64-Inhalt) **immer** redigiert — unabhängig von
 > `redact_params`. Der Datei-Inhalt landet so nie im Audit-Log. `filename` und
-> `content_type` bleiben Klartext (nützliche Metadaten, kein Inhalt).
+> `content_type` bleiben Klartext (nützliche Metadaten, kein Inhalt), außer die
+> Spec führt sie in `redact_params`. Trägt der Dateiname Kundendaten, gehört er
+> dorthin (`lexware-office`).
 Jeder Eintrag muss ein in **irgendeinem** Tool deklarierter Parameter sein —
 ein Tippfehler wird beim Start abgelehnt (sonst würde im Glauben an Schutz nichts
 redigiert). Mehr als diese Feldnamen-Liste kann Redaction v1 bewusst nicht
@@ -1251,6 +1624,11 @@ das Team damit das Ziel bestimmt, gelten über dieses Format hinaus:
 
 ## Validierung & Probe
 
+`connector check|selftest|privacy` und `connector upgrade` verlangen den
+vorhandenen Anlagen-Master-Key (`JNPT_MASTER_KEY` oder `JNPT_MASTER_KEY_FILE`).
+Ohne ihn folgen Exit 1 und eine klare Meldung vor Store/Vault; weder Datenbank
+noch Schlüsseldatei werden angelegt.
+
 ```bash
 jnpt connector check               # alle Connectoren prüfen
 jnpt connector check demo-erp      # nur einen
@@ -1296,7 +1674,8 @@ funktionsfähig? Er führt das repräsentative Tool aus (dasselbe wie `check`: d
 Test **übersprungen** — kein Fehler) und beurteilt das Ergebnis:
 
 1. **Erreichbarkeit/Auth/Status:** Der Aufruf liefert einen Erfolg (2xx). Ein
-   Timeout, 4xx/5xx oder eine zu große Antwort ist ein Fehlschlag (`upstream_error`);
+   Timeout, 4xx/5xx, eine zu große Antwort oder ein 2xx, dessen
+   `response_error` `true` ergibt, ist ein Fehlschlag (`upstream_error`);
    ein fehlendes Credential ist `config_error` (wie bei `check`).
 2. **Form-Check (leicht):** Die Antwort ist **gültiges JSON** **und** die
    `response`-Projektion (JMESPath) löst zu einem **nicht-leeren** Wert auf (nicht
@@ -1313,7 +1692,8 @@ Der Selbsttest ist **extern getriggert** (es gibt **keinen** eingebauten
 Scheduler): Cron, CI oder die Admin-GUI rufen ihn in beliebiger Kadenz. Exit-Code
 ≠ 0 bei Fehlschlag macht die CLI skriptbar; der **Grund** eines Fehlschlags ist
 wie überall **body- und secret-frei** (Status + knappe Erklärung, nie ein
-Upstream-Body, nie das Credential — auch wenn das Zielsystem es zurückspiegelt).
+Upstream-Body, nie das Credential — auch wenn das Zielsystem es zurückspiegelt;
+keine URL in Transportfehlern und keine Argumentwerte in Argumentfehlern).
 Dasselbe Urteil liefert `POST /api/admin/connectors/{name}/selftest` (für die GUI
 und externe Trigger), siehe (Produkt-Doku, nicht öffentlich).
 
