@@ -37,10 +37,16 @@ Regeln in `.gitleaks.toml`). Ein Treffer lässt die Prüfung scheitern. Hast du
 versehentlich ein echtes Geheimnis eingereicht: bitte sofort ungültig machen
 und uns an die Adresse oben schreiben.
 
+Dieselbe Prüfung lässt bei neuen Commits als Autor nur die Hausadresse
+`opensource@januaport.ai` zu. Beiträge von außen übernehmen wir deshalb
+unter dieser Adresse und nennen dich in der Commit-Nachricht.
+
 ## In English
 
 Report vulnerabilities to **security@januaport.ai**, not via public issues.
 We confirm receipt within 3 business days, give a first assessment within
 10 business days and coordinate disclosure with you. Encrypted reporting on
 request. No bug bounty. Every push and pull request runs a full-history
-secret scan.
+secret scan. New commits may only carry the house address
+`opensource@januaport.ai` as author; we take outside contributions over under
+that address and credit you in the commit message.
