@@ -29,6 +29,11 @@ regexTarget = "match"
 regexes = ['''@(?:[A-Za-z0-9-]+\.)*(?:example\.(?:com|org|net)|januaport\.ai|contoso\.com)$''']
 
 [[rules.allowlists]]
+description = "Systemadresse von GitHub für Merges über die Weboberfläche; die Autoren-Prüfung in secret-scan.yml lässt sie als Committer zu"
+regexTarget = "match"
+regexes = ['''^noreply@github\.com$''']
+
+[[rules.allowlists]]
 description = "Lock-Dateien tragen die öffentlichen Autorenangaben fremder Pakete"
 paths = ['''(?:^|/)(?:composer\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|go\.sum)$''']
 
